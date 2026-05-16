@@ -14,8 +14,8 @@ Alur kerja ACO:
 Referensi:
   Dorigo, M., & Stützle, T. (2004). Ant Colony Optimization. MIT Press.
 
-PIC: Anggota 1 (ACO Engineer)
-Kolaborasi: Anggota 2 (integrasi skor Fuzzy ke heuristik)
+PIC: Stevanus (ACO Engineer)
+Kolaborasi: Annisa (integrasi skor Fuzzy ke heuristik)
 """
 
 import numpy as np
@@ -39,152 +39,230 @@ class ACOSolver:
     def __init__(self, problem: VRPProblem,
                  n_ants=30, n_iterations=200,
                  alpha=1.0, beta=3.0, rho=0.3, Q=100.0):
-        """
-        TODO:
-        - Simpan semua parameter ke self
-        - Simpan problem ke self.problem
-        - Inisialisasi self.pheromone = None (diisi di _init_pheromone)
-        - Inisialisasi self.best_solution = None
-        - Inisialisasi self.best_distance = float('inf')
-        - Inisialisasi self.convergence_history = [] (untuk grafik konvergensi)
-        """
-        pass
+        self.problem        = problem
+        self.n_ants         = n_ants
+        self.n_iterations   = n_iterations
+        self.alpha          = alpha
+        self.beta           = beta
+        self.rho            = rho
+        self.Q              = Q
+
+        self.pheromone          = None
+        self.best_solution      = None
+        self.best_distance      = float('inf')
+        self.convergence_history = []
+
+    # ── Public ────────────────────────────────────────────────────────────────
 
     def solve(self, callback=None) -> dict:
         """
         Jalankan algoritma ACO dan return solusi terbaik.
 
         Parameter:
-          callback (callable): Fungsi yang dipanggil setiap iterasi selesai.
-                               Berguna untuk update progress bar di GUI.
+          callback (callable): Dipanggil setiap iterasi selesai.
                                Signature: callback(iteration, best_distance)
 
         Return:
           dict dengan key:
-            'routes'    : list[list[int]] — rute per kendaraan (node_id)
-            'distance'  : float           — total jarak terbaik (meter)
-            'history'   : list[float]     — riwayat best distance per iterasi
-
-        TODO:
-        - Panggil self._init_pheromone()
-        - Loop sebanyak n_iterations:
-            a. Bangun solusi semua semut: self._build_solutions()
-            b. Evaluasi setiap solusi: self._evaluate_solution()
-            c. Update feromon: self._update_pheromone()
-            d. Update best solution jika ada yang lebih baik
-            e. Append best_distance ke convergence_history
-            f. Panggil callback jika tidak None
-        - Return dict hasil
+            'routes'   : list[list[int]] — rute per kendaraan (node_id)
+            'distance' : float           — total jarak terbaik (meter)
+            'history'  : list[float]     — riwayat best distance per iterasi
         """
-        pass
+        self._init_pheromone()
+        self.convergence_history = []
+        self.best_solution = None
+        self.best_distance = float('inf')
+
+        for iteration in range(self.n_iterations):
+            # a. Bangun solusi semua semut
+            solutions = self._build_solutions()
+
+            # b & c. Evaluasi jarak setiap solusi + update best
+            for sol in solutions:
+                dist = self._evaluate_solution(sol)
+                sol['distance'] = dist
+                if dist < self.best_distance:
+                    self.best_distance = dist
+                    self.best_solution = sol
+
+            # d. Update feromon
+            self._update_pheromone(solutions)
+
+            # e. Catat konvergensi
+            self.convergence_history.append(self.best_distance)
+
+            # f. Callback GUI (progress bar)
+            if callback is not None:
+                callback(iteration + 1, self.best_distance)
+
+        return {
+            'routes'  : self.best_solution['routes'],
+            'distance': self.best_distance,
+            'history' : self.convergence_history,
+        }
+
+    # ── Private ───────────────────────────────────────────────────────────────
 
     def _init_pheromone(self):
-        """
-        Inisialisasi matriks feromon dengan nilai seragam.
-
-        TODO:
-        - Hitung n = jumlah semua node (depot + delivery nodes)
-        - Buat numpy array (n x n) berisi nilai awal, misal: 1.0 / n
-        - Simpan ke self.pheromone
-        """
-        pass
+        """Inisialisasi matriks feromon dengan nilai seragam kecil."""
+        n = len(self.problem.get_all_nodes())  # depot + delivery nodes
+        initial_value = 1.0 / n
+        self.pheromone = np.full((n, n), initial_value, dtype=float)
+        np.fill_diagonal(self.pheromone, 0.0)  # diagonal = 0 (tidak ke diri sendiri)
 
     def _build_solutions(self) -> list:
-        """
-        Setiap semut membangun satu solusi rute lengkap.
-
-        Return:
-          list of dict, satu dict per semut:
-            {'routes': list[list[int]], 'distance': float}
-
-        TODO:
-        - Loop sebanyak n_ants:
-            a. Panggil self._build_single_ant_solution()
-            b. Kumpulkan hasilnya ke list
-        - Return list solusi semua semut
-        """
-        pass
+        """Bangun solusi untuk semua semut dalam satu iterasi."""
+        return [self._build_single_ant_solution() for _ in range(self.n_ants)]
 
     def _build_single_ant_solution(self) -> dict:
         """
         Satu semut membangun solusi rute untuk semua kendaraan.
 
-        Logika:
-          - Mulai dari depot
-          - Pilih node berikutnya berdasarkan probabilitas ACO:
-              P(i→j) ∝ (feromon[i][j]^alpha) * (heuristik[i][j]^beta)
-          - Heuristik = (1/jarak) * (1 + skor_prioritas/100)
-            ↑ ini yang mengintegrasikan Fuzzy Logic ke ACO
-          - Jika kendaraan penuh atau tidak ada node tersisa, kembali ke depot
-          - Lanjutkan dengan kendaraan berikutnya
-
-        TODO:
-        - Inisialisasi visited = set() untuk node yang sudah dikunjungi
-        - Bagi node ke kendaraan-kendaraan tersedia
-        - Untuk setiap kendaraan, bangun rute dengan metode probabilistik
-        - Return dict {'routes': ..., 'distance': ...}
+        Index node di dist_matrix: 0 = depot, 1..n = delivery nodes.
         """
-        pass
+        all_nodes   = self.problem.get_all_nodes()  # [depot, node1, node2, ...]
+        n_delivery  = len(self.problem.nodes)
+        # Index 1..n = delivery nodes
+        unvisited   = list(range(1, n_delivery + 1))
+        random.shuffle(unvisited)  # acak urutan awal agar eksplorasi lebih baik
+
+        routes = []
+
+        for vehicle in self.problem.vehicles:
+            if not unvisited:
+                break
+
+            route        = []   # simpan index node (bukan node_id)
+            current      = 0    # mulai dari depot (index 0)
+            vehicle_load = 0.0
+
+            while unvisited:
+                next_node = self._select_next_node(
+                    current, unvisited, vehicle_load, vehicle.capacity_kg
+                )
+                if next_node == -1:
+                    break  # kendaraan penuh atau tidak ada kandidat
+
+                route.append(next_node)
+                unvisited.remove(next_node)
+
+                # Akumulasi berat muatan
+                # Index di all_nodes: delivery node ke-i ada di index i+1
+                node_obj      = all_nodes[next_node]
+                vehicle_load += node_obj.weight_kg
+                current       = next_node
+
+            routes.append(route)
+
+        # Sisa node yang tidak sempat dikunjungi → masukkan ke rute terakhir
+        # (fallback agar semua node selalu terkunjungi)
+        if unvisited and routes:
+            routes[-1].extend(unvisited)
+
+        return {'routes': routes, 'distance': 0.0}
 
     def _select_next_node(self, current_node: int, unvisited: list,
                           vehicle_load: float, capacity: float) -> int:
         """
         Pilih node berikutnya menggunakan probabilitas ACO.
 
-        Parameter:
-          current_node : index node saat ini di dist_matrix
-          unvisited    : list index node yang belum dikunjungi
-          vehicle_load : berat muatan kendaraan saat ini (kg)
-          capacity     : kapasitas maksimum kendaraan (kg)
+        Heuristik dimodifikasi dengan skor prioritas Fuzzy:
+          eta[i][j] = (1 / jarak[i][j]) * (1 + priority[j] / 100)
 
         Return:
-          int: index node terpilih, atau -1 jika tidak ada yang bisa dipilih
-
-        TODO:
-        - Filter unvisited: hanya node yang kapasitasnya masih muat
-        - Hitung numerator probabilitas setiap kandidat:
-            tau[i][j]^alpha * eta[i][j]^beta
-            di mana eta (heuristik) = (1/jarak) * (1 + priority/100)
-        - Normalisasi menjadi distribusi probabilitas
-        - Pilih node menggunakan random.choices() dengan weights
-        - Return node terpilih
+          int: index node terpilih, atau -1 jika tidak ada kandidat valid.
         """
-        pass
+        all_nodes  = self.problem.get_all_nodes()
+        dist_matrix = self.problem.dist_matrix
+
+        # Filter: hanya node yang kapasitasnya masih muat
+        kandidat = [
+            j for j in unvisited
+            if vehicle_load + all_nodes[j].weight_kg <= capacity
+        ]
+
+        if not kandidat:
+            return -1
+
+        # Hitung numerator probabilitas setiap kandidat
+        weights = []
+        for j in kandidat:
+            jarak = dist_matrix[current_node][j]
+            if jarak <= 0:
+                jarak = 1e-9  # hindari pembagian nol
+
+            priority = getattr(all_nodes[j], 'priority', 0.0)
+            eta      = (1.0 / jarak) * (1.0 + priority / 100.0)
+            tau      = self.pheromone[current_node][j]
+
+            w = (tau ** self.alpha) * (eta ** self.beta)
+            weights.append(max(w, 1e-10))  # pastikan weight selalu positif
+
+        # Pilih secara probabilistik
+        chosen = random.choices(kandidat, weights=weights, k=1)[0]
+        return chosen
 
     def _evaluate_solution(self, solution: dict) -> float:
         """
-        Hitung total jarak dari satu solusi (semua rute semua kendaraan).
+        Hitung total jarak semua rute dalam satu solusi.
 
-        Parameter:
-          solution: dict {'routes': list[list[int]], ...}
-
-        Return:
-          float: total jarak dalam meter
-
-        TODO:
-        - Untuk setiap rute dalam solution['routes']:
-            - Hitung jarak dari depot → node1 → node2 → ... → depot
-            - Gunakan self.problem.dist_matrix
-        - Jumlahkan semua jarak
-        - Return total
+        Setiap rute: depot(0) → node_a → node_b → ... → depot(0)
         """
-        pass
+        dist_matrix  = self.problem.dist_matrix
+        total_distance = 0.0
+
+        for route in solution['routes']:
+            if not route:
+                continue
+
+            # depot → node pertama
+            total_distance += dist_matrix[0][route[0]]
+
+            # antar node
+            for k in range(len(route) - 1):
+                total_distance += dist_matrix[route[k]][route[k + 1]]
+
+            # node terakhir → depot
+            total_distance += dist_matrix[route[-1]][0]
+
+        return total_distance
 
     def _update_pheromone(self, solutions: list):
         """
-        Update matriks feromon berdasarkan semua solusi pada iterasi ini.
+        Update matriks feromon: evaporasi + penguatan dari semua semut.
 
         Rumus:
-          tau[i][j] = (1 - rho) * tau[i][j]  ← evaporasi
-          tau[i][j] += sum(Q / distance) untuk setiap semut yang lewat (i,j)
-
-        TODO:
-        - Evaporasi: kalikan seluruh matriks dengan (1 - rho)
-        - Untuk setiap solusi semut:
-            - Hitung delta = Q / solution['distance']
-            - Untuk setiap edge (i,j) dalam rute semut tersebut:
-                - self.pheromone[i][j] += delta
-                - self.pheromone[j][i] += delta  (graf tidak berarah)
-        - Pastikan nilai feromon tidak drop terlalu rendah (clip minimal 1e-10)
+          tau[i][j] = (1 - rho) * tau[i][j]          ← evaporasi
+          tau[i][j] += Q / distance  (tiap semut)     ← penguatan
         """
-        pass
+        # Evaporasi
+        self.pheromone *= (1.0 - self.rho)
+
+        # Penguatan dari setiap solusi semut
+        for sol in solutions:
+            if sol['distance'] <= 0:
+                continue
+
+            delta = self.Q / sol['distance']
+
+            for route in sol['routes']:
+                if not route:
+                    continue
+
+                # Edge: depot → node pertama
+                self.pheromone[0][route[0]]      += delta
+                self.pheromone[route[0]][0]      += delta
+
+                # Edge: antar node dalam rute
+                for k in range(len(route) - 1):
+                    i, j = route[k], route[k + 1]
+                    self.pheromone[i][j] += delta
+                    self.pheromone[j][i] += delta
+
+                # Edge: node terakhir → depot
+                self.pheromone[route[-1]][0]     += delta
+                self.pheromone[0][route[-1]]     += delta
+
+        # Clip agar feromon tidak drop terlalu rendah
+        np.clip(self.pheromone, 1e-10, None, out=self.pheromone)
+        np.fill_diagonal(self.pheromone, 0.0)
