@@ -30,7 +30,7 @@ class MapCanvas(QWidget):
     Widget kanvas untuk menampilkan peta dan rute pengiriman.
     """
 
-   def __init__(self, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
 
         # Buat figure dan canvas matplotlib
@@ -52,14 +52,13 @@ class MapCanvas(QWidget):
         self.current_nodes = []
         self.current_solution = None
 
-        # Hubungkan event hover untuk tooltip
-        self._hover_annotation = None
-        self._node_scatter = None
-        self.canvas.mpl_connect("motion_notify_event", self._on_hover)
-
         self._draw_empty_state()
 
-     def _draw_empty_state(self):
+    # ------------------------------------------------------------------
+    # PRIVATE HELPERS
+    # ------------------------------------------------------------------
+
+    def _draw_empty_state(self):
         """Tampilkan placeholder saat belum ada data."""
         self.ax.clear()
         self.ax.set_facecolor("#F8F9FA")
@@ -80,60 +79,10 @@ class MapCanvas(QWidget):
 
         self.canvas.draw()
 
-    def _build_node_map(self, nodes, depot):
-        """
-        Bangun dict {node_id: DeliveryNode} dari nodes + depot.
-        Dipakai untuk lookup cepat saat render rute.
-        """
-        node_map = {n.node_id: n for n in nodes}
-        node_map[depot.node_id] = depot
-        return node_map
-
-    def _on_hover(self, event):
-        """
-        Tampilkan tooltip nama & prioritas saat kursor hover di atas node.
-        Hanya aktif kalau sudah ada scatter plot node.
-        """
-        if event.inaxes != self.ax or self._node_scatter is None:
-            if self._hover_annotation:
-                self._hover_annotation.set_visible(False)
-                self.canvas.draw_idle()
-            return
-
-        cont, ind = self._node_scatter.contains(event)
-        if cont:
-            idx = ind["ind"][0]
-            # _scatter_meta disimpan saat plot_nodes dipanggil
-            name, priority = self._scatter_meta[idx]
-            x = self._node_scatter.get_offsets()[idx][0]
-            y = self._node_scatter.get_offsets()[idx][1]
-
-            if self._hover_annotation is None:
-                self._hover_annotation = self.ax.annotate(
-                    "",
-                    xy=(x, y),
-                    xytext=(15, 15),
-                    textcoords="offset points",
-                    bbox=dict(boxstyle="round,pad=0.4", fc="white",
-                              ec="#CCCCCC", alpha=0.9),
-                    fontsize=9,
-                    zorder=10
-                )
-
-            self._hover_annotation.set_text(
-                f"{name}\nPrioritas: {priority:.1f}"
-            )
-            self._hover_annotation.xy = (x, y)
-            self._hover_annotation.set_visible(True)
-        else:
-            if self._hover_annotation:
-                self._hover_annotation.set_visible(False)
-
-        self.canvas.draw_idle()
-
-  
+    # ------------------------------------------------------------------
     # PUBLIC API
-   
+    # ------------------------------------------------------------------
+
     def plot_nodes(self, nodes: list, depot, _skip_draw=False):
         """
         Tampilkan semua titik lokasi di peta (sebelum ACO dijalankan).
@@ -145,9 +94,6 @@ class MapCanvas(QWidget):
                                            plot_solution (draw ditunda)
         """
         self.ax.clear()
-        self._hover_annotation = None
-        self._node_scatter = None
-        self._scatter_meta = []
 
         self.ax.set_facecolor("#F0F4F8")
         self.figure.patch.set_facecolor("#FFFFFF")
@@ -165,8 +111,6 @@ class MapCanvas(QWidget):
             s=90, zorder=5,
             edgecolors="white", linewidths=0.8
         )
-        self._node_scatter = scatter
-        self._scatter_meta = [(n.name, n.priority) for n in nodes]
 
         # Anotasi nama node
         for n in nodes:
@@ -231,7 +175,8 @@ class MapCanvas(QWidget):
         # Gambar base layer nodes dulu (tanpa draw)
         self.plot_nodes(nodes, depot, _skip_draw=True)
 
-        node_map = self._build_node_map(nodes, depot)
+        node_map = {n.node_id: n for n in nodes}
+        node_map[depot.node_id] = depot
         routes = solution.get("routes", [])
         total_dist_km = solution.get("distance", 0) / 1000.0
 
@@ -305,7 +250,7 @@ class MapCanvas(QWidget):
         self.current_solution = solution
         self.canvas.draw()
 
-     def animate_iteration(self, pheromone_matrix, nodes: list, depot):
+    def animate_iteration(self, pheromone_matrix, nodes: list, depot):
         """
         (Fitur opsional) Visualisasi intensitas feromon per iterasi.
 
@@ -350,13 +295,10 @@ class MapCanvas(QWidget):
 
         self.canvas.draw_idle()
 
-  def clear(self):
+    def clear(self):
         """Reset canvas ke empty state."""
         self.current_nodes = []
         self.current_solution = None
-        self._node_scatter = None
-        self._hover_annotation = None
-        self._scatter_meta = []
         self._draw_empty_state()
 
     def save_figure(self, filepath: str):
