@@ -11,7 +11,7 @@ Menggunakan matplotlib embedded di PyQt5 via FigureCanvasQTAgg.
 
 PIC: Rafly (Data & Visualisasi)
 Kolaborasi: Jefri (embed ke main_window)
-""
+"""
 
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QToolBar, QAction
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
