@@ -9,8 +9,8 @@ Menampilkan visualisasi interaktif:
 
 Menggunakan matplotlib embedded di PyQt5 via FigureCanvasQTAgg.
 
-PIC: Anggota 4 (Data & Visualisasi)
-Kolaborasi: Anggota 3 (embed ke main_window)
+PIC: Rafly (Data & Visualisasi)
+Kolaborasi: Jefri (embed ke main_window)
 """
 
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QToolBar, QAction
