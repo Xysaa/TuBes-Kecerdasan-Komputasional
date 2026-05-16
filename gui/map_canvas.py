@@ -131,9 +131,9 @@ class MapCanvas(QWidget):
 
         self.canvas.draw_idle()
 
-    # ------------------------------------------------------------------
+  
     # PUBLIC API
-    # ---------------
+   
     def plot_nodes(self, nodes: list, depot, _skip_draw=False):
         """
         Tampilkan semua titik lokasi di peta (sebelum ACO dijalankan).
