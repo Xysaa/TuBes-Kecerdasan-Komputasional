@@ -1,0 +1,57 @@
+{
+  "city": "Bandar Lampung, Indonesia",
+  "depot": {
+    "node_id": 0,
+    "name": "Depot Pusat",
+    "lat": -5.3971,
+    "lon": 105.2668,
+    "weight_kg": 0,
+    "deadline_h": 99
+  },
+  "delivery_nodes": [
+    {
+      "node_id": 1,
+      "name": "Pasar Tengah",
+      "lat": -5.4244,
+      "lon": 105.2659,
+      "weight_kg": 10.5,
+      "deadline_h": 3
+    },
+    {
+      "node_id": 2,
+      "name": "Mall Boemi Kedaton",
+      "lat": -5.3906,
+      "lon": 105.2560,
+      "weight_kg": 25.0,
+      "deadline_h": 12
+    },
+    {
+      "node_id": 3,
+      "name": "Stasiun Tanjungkarang",
+      "lat": -5.4189,
+      "lon": 105.2612,
+      "weight_kg": 5.0,
+      "deadline_h": 6
+    },
+    {
+      "node_id": 4,
+      "name": "Universitas Lampung",
+      "lat": -5.3666,
+      "lon": 105.2424,
+      "weight_kg": 15.0,
+      "deadline_h": 24
+    },
+    {
+      "node_id": 5,
+      "name": "RS Urip Sumoharjo",
+      "lat": -5.3796,
+      "lon": 105.2567,
+      "weight_kg": 8.0,
+      "deadline_h": 2
+    }
+  ],
+  "vehicles": [
+    { "vehicle_id": 1, "capacity_kg": 50.0 },
+    { "vehicle_id": 2, "capacity_kg": 50.0 }
+  ]
+}

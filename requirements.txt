@@ -1,0 +1,27 @@
+# ============================================================
+# requirements.txt — Dependensi Proyek VRP-ACO-Fuzzy
+# Install dengan: pip install -r requirements.txt
+# ============================================================
+
+# Data jalan & graf
+osmnx>=1.9.0
+networkx>=3.0
+
+# Algoritma & komputasi
+numpy>=1.24.0
+scikit-fuzzy>=0.4.2
+
+# Manajemen data & geocoding
+pandas>=2.0.0
+geopy>=2.4.0
+
+# GUI
+PyQt5>=5.15.0
+
+# Visualisasi
+matplotlib>=3.7.0
+Pillow>=10.0.0
+folium>=0.15.0       # Opsional: peta interaktif HTML
+
+# Testing
+pytest>=7.0.0
