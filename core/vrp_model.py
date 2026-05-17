@@ -6,136 +6,116 @@ Berisi kelas-kelas data yang merepresentasikan:
   - Vehicle       : satu kendaraan pengantar
   - VRPProblem    : keseluruhan masalah VRP (depot + semua node + kendaraan)
 
-PIC: Anggota 1 (ACO Engineer)
+PIC:  Jefri Wahyu Fernando Sembiring
 """
 
 
 class DeliveryNode:
     """
-    Merepresentasikan satu titik lokasi pengiriman.
-
-    Atribut yang perlu ada:
-      - node_id     (int)   : ID unik node
-      - name        (str)   : Nama lokasi (misal: "Pasar Tengah")
-      - lat         (float) : Latitude koordinat
-      - lon         (float) : Longitude koordinat
-      - osm_node_id (int)   : ID node di graf OSM (hasil nearest_nodes)
-      - weight_kg   (float) : Berat paket dalam kilogram
-      - deadline_h  (float) : Sisa waktu deadline dalam jam
-      - priority    (float) : Skor prioritas (0-100), diisi oleh FuzzyEvaluator
-
-    TODO:
-    - Implementasi __init__ dengan parameter di atas
-    - Implementasi __repr__ untuk debugging yang informatif
+    Merepresentasikan satu titik lokasi pengiriman beserta seluruh atribut paketnya.
     """
 
     def __init__(self, node_id, name, lat, lon, weight_kg=0.0, deadline_h=24.0):
-        """
-        TODO:
-        - Simpan semua parameter ke self
-        - Set osm_node_id = None (akan diisi oleh OSMHandler)
-        - Set priority = 0.0 (akan diisi oleh FuzzyEvaluator)
-        """
-        pass
+        # Menyimpan parameter identitas unik dan data geografis node
+        self.node_id = node_id
+        self.name = name
+        self.lat = lat
+        self.lon = lon
+        
+        # Atribut paket: berat (kg) dan batas waktu sisa pengiriman (jam)
+        self.weight_kg = weight_kg
+        self.deadline_h = deadline_h
+        
+        # ID node pada graf OpenStreetMap, akan diisi oleh OSMHandler saat penentuan titik terdekat
+        self.osm_node_id = None
+        
+        # Skor prioritas (skala 0.0 - 100.0), akan dikalkulasi dan diisi oleh FuzzyEvaluator
+        self.priority = 0.0
 
     def __repr__(self):
-        """
-        TODO:
-        - Return string informatif, contoh:
-          "DeliveryNode(id=1, name='Pasar Tengah', priority=85.0)"
-        """
-        pass
+        # Mengembalikan representasi string terformat untuk mempermudah proses debugging
+        return f"DeliveryNode(id={self.node_id}, name='{self.name}', priority={self.priority:.1f})"
 
 
 class Vehicle:
     """
-    Merepresentasikan satu kendaraan pengiriman.
-
-    Atribut yang perlu ada:
-      - vehicle_id      (int)         : ID unik kendaraan
-      - capacity_kg     (float)       : Kapasitas muatan maksimum (kg)
-      - route           (list[int])   : Daftar node_id yang dikunjungi (urutan)
-      - total_distance  (float)       : Total jarak rute dalam meter
-
-    TODO:
-    - Implementasi __init__
-    - Implementasi reset_route() untuk mengosongkan rute
-    - Implementasi current_load() untuk menghitung total berat paket saat ini
+    Merepresentasikan satu armada kendaraan pengiriman beserta kapasitas maksimalnya.
     """
 
     def __init__(self, vehicle_id, capacity_kg=100.0):
-        """
-        TODO:
-        - Simpan vehicle_id dan capacity_kg
-        - Inisialisasi route sebagai list kosong
-        - Inisialisasi total_distance = 0.0
-        """
-        pass
+        # Menyimpan ID unik kendaraan dan batas maksimal kapasitas muatan
+        self.vehicle_id = vehicle_id
+        self.capacity_kg = capacity_kg
+        
+        # Menyimpan urutan node_id dari lokasi-lokasi yang dikunjungi dalam rute saat ini
+        self.route = []
+        
+        # Akumulasi total jarak tempuh rute kendaraan ini dalam satuan meter
+        self.total_distance = 0.0
 
     def reset_route(self):
-        """
-        TODO:
-        - Kosongkan self.route menjadi []
-        - Reset self.total_distance menjadi 0.0
-        """
-        pass
+        # Mengosongkan daftar kunjungan rute sebelum memulai iterasi koloni semut yang baru
+        self.route = []
+        # Mengembalikan akumulasi jarak tempuh ke angka nol
+        self.total_distance = 0.0
 
     def current_load(self, nodes: dict) -> float:
         """
-        Hitung total berat paket yang sudah ada di rute kendaraan ini.
+        Menghitung total berat paket yang sedang diangkut di dalam rute kendaraan saat ini.
 
         Parameter:
-          nodes (dict): dict {node_id: DeliveryNode}
-
-        TODO:
-        - Iterasi self.route
-        - Jumlahkan weight_kg dari setiap node yang ada di route
-        - Return total berat (float)
+          nodes (dict): Kamus data berformat {node_id: DeliveryNode}
         """
-        pass
+        total_weight = 0.0
+        
+        # Iterasi setiap kode node_id yang telah dimasukkan ke dalam rute kendaraan
+        for node_id in self.route:
+            # Mengambil objek DeliveryNode dari kamus data berdasarkan node_id
+            if node_id in nodes:
+                # Menambahkan berat paket node tersebut ke akumulasi total
+                total_weight += nodes[node_id].weight_kg
+                
+        return total_weight
 
 
 class VRPProblem:
     """
-    Merepresentasikan keseluruhan masalah VRP.
-
-    Atribut yang perlu ada:
-      - depot       (DeliveryNode)       : Titik awal & akhir semua kendaraan
-      - nodes       (list[DeliveryNode]) : Semua titik pengiriman (tidak termasuk depot)
-      - vehicles    (list[Vehicle])      : Daftar kendaraan yang tersedia
-      - dist_matrix (list[list[float]])  : Matriks jarak antar node (meter)
-        Index 0 = depot, index 1..n = nodes
-
-    TODO:
-    - Implementasi __init__(depot, nodes, vehicles)
-    - Implementasi get_all_nodes() yang return [depot] + nodes
-    - Implementasi validate() yang return True jika data lengkap dan valid
+    Merepresentasikan model utuh dari permasalahan Vehicle Routing Problem (VRP).
     """
 
     def __init__(self, depot: DeliveryNode, nodes: list, vehicles: list):
-        """
-        TODO:
-        - Simpan depot, nodes, vehicles ke self
-        - Inisialisasi dist_matrix sebagai None (diisi oleh OSMHandler)
-        """
-        pass
+        # Menyimpan titik awal/akhir (depot), daftar node tujuan, dan daftar kendaraan
+        self.depot = depot
+        self.nodes = nodes
+        self.vehicles = vehicles
+        
+        # Matriks jarak berdimensi n x n (dalam meter) yang nantinya dihitung oleh OSMHandler
+        # Indeks 0 merepresentasikan depot, sedangkan indeks 1 hingga n melambangkan delivery nodes
+        self.dist_matrix = None
 
     def get_all_nodes(self) -> list:
-        """
-        TODO:
-        - Return list gabungan: [self.depot] + self.nodes
-        """
-        pass
+        # Menggabungkan titik depot di awal list diikuti oleh seluruh node tujuan pengiriman
+        return [self.depot] + self.nodes
 
     def validate(self) -> bool:
         """
-        Validasi bahwa problem sudah siap dijalankan ACO.
-
-        TODO:
-        - Cek depot tidak None
-        - Cek nodes tidak kosong
-        - Cek vehicles tidak kosong
-        - Cek dist_matrix sudah terisi (tidak None)
-        - Return True jika semua valid, False jika ada yang kurang
+        Validasi kesiapan data masalah sebelum dieksekusi oleh algoritma optimasi ACO.
         """
-        pass
+        # Memastikan bahwa objek lokasi depot telah diatur dan tidak bernilai None
+        if self.depot is None:
+            return False
+            
+        # Memastikan daftar lokasi pengantaran paket tidak dalam keadaan kosong
+        if not self.nodes:
+            return False
+            
+        # Memastikan tersedianya armada kendaraan untuk melakukan pengiriman
+        if not self.vehicles:
+            return False
+            
+        # Memastikan matriks jarak riil jalan raya telah dihitung dan siap digunakan
+        if self.dist_matrix is None:
+            return False
+            
+        # Jika seluruh kondisi terpenuhi, struktur problem dinyatakan valid dan siap dijalankan
+        return True

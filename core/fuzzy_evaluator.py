@@ -20,8 +20,8 @@ Membership Functions: Triangular (trimf) menggunakan scikit-fuzzy
 
 Referensi: https://pythonhosted.org/scikit-fuzzy/
 
-PIC: Anggota 2 (Fuzzy Logic Developer)
-Kolaborasi: Anggota 1 (integrasi skor ke ACO heuristik)
+PIC: Annisa (Fuzzy Logic Developer)
+Kolaborasi: Stevanus (integrasi skor ke ACO heuristik)
 """
 
 import numpy as np
@@ -36,44 +36,72 @@ class FuzzyEvaluator:
     """
 
     def __init__(self):
-        """
-        TODO:
-        - Panggil self._build_fuzzy_system() untuk membangun FIS
-        - Simpan sistem simulasi ke self.simulation
-        """
-        pass
+        self.simulation = self._build_fuzzy_system()
 
     def _build_fuzzy_system(self):
         """
         Bangun Fuzzy Inference System menggunakan scikit-fuzzy.
-
-        TODO:
-        Step 1 — Definisikan Antecedent (input) dan Consequent (output):
-          deadline = ctrl.Antecedent(np.arange(0, 25, 1), 'deadline_jam')
-          berat    = ctrl.Antecedent(np.arange(0, 51, 1), 'berat_kg')
-          jarak    = ctrl.Antecedent(np.arange(0, 51, 1), 'jarak_km')
-          prioritas = ctrl.Consequent(np.arange(0, 101, 1), 'prioritas')
-
-        Step 2 — Definisikan Membership Functions (trimf):
-          deadline: 'mendesak' [0, 0, 8], 'normal' [4, 12, 20], 'santai' [16, 24, 24]
-          berat:    'ringan'   [0, 0,15], 'sedang' [10, 25, 40], 'berat' [35, 50, 50]
-          jarak:    'dekat'    [0, 0,20], 'sedang' [15, 25, 35], 'jauh'  [30, 50, 50]
-          prioritas:'rendah'  [0, 0,40], 'sedang' [30, 50, 70], 'tinggi'[60,100,100]
-
-        Step 3 — Definisikan Rules (minimal 5 rule):
-          Contoh:
-          rule1: IF deadline=mendesak THEN prioritas=tinggi
-          rule2: IF deadline=santai AND berat=ringan THEN prioritas=rendah
-          rule3: IF berat=berat AND jarak=jauh THEN prioritas=tinggi
-          rule4: IF deadline=normal AND berat=sedang THEN prioritas=sedang
-          rule5: IF jarak=jauh AND deadline=mendesak THEN prioritas=tinggi
-          (Tambahkan rule lain sesuai logika domain)
-
-        Step 4 — Buat ControlSystem dan ControlSystemSimulation:
-          sistem_ctrl = ctrl.ControlSystem([rule1, rule2, ...])
-          return ctrl.ControlSystemSimulation(sistem_ctrl)
         """
-        pass
+        # ── Step 1: Definisi Antecedent & Consequent ──────────────────────────
+        deadline  = ctrl.Antecedent(np.arange(0, 25, 1),  'deadline_jam')
+        berat     = ctrl.Antecedent(np.arange(0, 51, 1),  'berat_kg')
+        jarak     = ctrl.Antecedent(np.arange(0, 51, 1),  'jarak_km')
+        prioritas = ctrl.Consequent(np.arange(0, 101, 1), 'prioritas')
+
+        # ── Step 2: Membership Functions (trimf) ──────────────────────────────
+        deadline['mendesak'] = fuzz.trimf(deadline.universe,  [0,  0,  8])
+        deadline['normal']   = fuzz.trimf(deadline.universe,  [4,  12, 20])
+        deadline['santai']   = fuzz.trimf(deadline.universe,  [16, 24, 24])
+
+        berat['ringan'] = fuzz.trimf(berat.universe, [0,  0,  15])
+        berat['sedang'] = fuzz.trimf(berat.universe, [10, 25, 40])
+        berat['berat']  = fuzz.trimf(berat.universe, [35, 50, 50])
+
+        jarak['dekat']  = fuzz.trimf(jarak.universe, [0,  0,  20])
+        jarak['sedang'] = fuzz.trimf(jarak.universe, [15, 25, 35])
+        jarak['jauh']   = fuzz.trimf(jarak.universe, [30, 50, 50])
+
+        prioritas['rendah']  = fuzz.trimf(prioritas.universe, [0,  0,  40])
+        prioritas['sedang']  = fuzz.trimf(prioritas.universe, [30, 50, 70])
+        prioritas['tinggi']  = fuzz.trimf(prioritas.universe, [60, 100, 100])
+
+        # ── Step 3: Rule Base ─────────────────────────────────────────────────
+        rule1 = ctrl.Rule(deadline['mendesak'],
+                          prioritas['tinggi'])
+
+        rule2 = ctrl.Rule(deadline['santai'] & berat['ringan'],
+                          prioritas['rendah'])
+
+        rule3 = ctrl.Rule(berat['berat'] & jarak['jauh'],
+                          prioritas['tinggi'])
+
+        rule4 = ctrl.Rule(deadline['normal'] & berat['sedang'],
+                          prioritas['sedang'])
+
+        rule5 = ctrl.Rule(jarak['jauh'] & deadline['mendesak'],
+                          prioritas['tinggi'])
+
+        rule6 = ctrl.Rule(deadline['normal'] & berat['ringan'] & jarak['dekat'],
+                          prioritas['rendah'])
+
+        rule7 = ctrl.Rule(deadline['santai'] & jarak['jauh'],
+                          prioritas['sedang'])
+
+        rule8 = ctrl.Rule(berat['berat'] & deadline['normal'],
+                          prioritas['sedang'])
+
+        rule9 = ctrl.Rule(deadline['santai'] & berat['berat'] & jarak['jauh'],
+                          prioritas['sedang'])
+
+        rule10 = ctrl.Rule(deadline['mendesak'] & berat['ringan'],
+                           prioritas['tinggi'])
+
+        # ── Step 4: Buat Control System & Simulation ──────────────────────────
+        sistem_ctrl = ctrl.ControlSystem([
+            rule1, rule2, rule3, rule4, rule5,
+            rule6, rule7, rule8, rule9, rule10
+        ])
+        return ctrl.ControlSystemSimulation(sistem_ctrl)
 
     def evaluate(self, node: DeliveryNode, distance_from_depot_km: float) -> float:
         """
@@ -85,17 +113,23 @@ class FuzzyEvaluator:
 
         Return:
           float: Skor prioritas (0.0 – 100.0)
-
-        TODO:
-        - Set input ke self.simulation:
-            self.simulation.input['deadline_jam']  = node.deadline_h
-            self.simulation.input['berat_kg']      = node.weight_kg
-            self.simulation.input['jarak_km']      = distance_from_depot_km
-        - Jalankan: self.simulation.compute()
-        - Return: self.simulation.output['prioritas']
-        - Tangani exception: jika error, return nilai default 50.0
         """
-        pass
+        try:
+            # Clamp nilai input agar tidak keluar dari universe of discourse
+            deadline_val = float(np.clip(node.deadline_h, 0, 24))
+            berat_val    = float(np.clip(node.weight_kg, 0, 50))
+            jarak_val    = float(np.clip(distance_from_depot_km, 0, 50))
+
+            self.simulation.input['deadline_jam'] = deadline_val
+            self.simulation.input['berat_kg']     = berat_val
+            self.simulation.input['jarak_km']     = jarak_val
+
+            self.simulation.compute()
+            return float(self.simulation.output['prioritas'])
+
+        except Exception:
+            # Fallback ke prioritas sedang jika terjadi error
+            return 50.0
 
     def evaluate_all(self, nodes: list, dist_matrix: list, depot_index: int = 0) -> list:
         """
@@ -108,23 +142,31 @@ class FuzzyEvaluator:
 
         Return:
           list[float]: skor prioritas untuk setiap node (urutan sama dengan input)
-
-        TODO:
-        - Loop setiap node dengan index i
-        - Hitung jarak dari depot: dist_matrix[depot_index][i+1] / 1000 (konversi ke km)
-        - Panggil self.evaluate(node, jarak_km)
-        - Simpan skor ke node.priority
-        - Return list semua skor prioritas
         """
-        pass
+        scores = []
+        for i, node in enumerate(nodes):
+            # Index di dist_matrix: depot = 0, node ke-i = i+1
+            distance_m  = dist_matrix[depot_index][i + 1]
+            distance_km = distance_m / 1000.0
+
+            score = self.evaluate(node, distance_km)
+            node.priority = score
+            scores.append(score)
+
+        return scores
 
     def get_priority_label(self, score: float) -> str:
         """
         Konversi skor numerik ke label teks.
 
-        TODO:
-        - score < 34  → return "🟢 Rendah"
-        - score < 67  → return "🟡 Sedang"
-        - score >= 67 → return "🔴 Tinggi"
+        Return:
+          "🟢 Rendah"  jika score < 34
+          "🟡 Sedang"  jika 34 <= score < 67
+          "🔴 Tinggi"  jika score >= 67
         """
-        pass
+        if score < 34:
+            return "🟢 Rendah"
+        elif score < 67:
+            return "🟡 Sedang"
+        else:
+            return "🔴 Tinggi"

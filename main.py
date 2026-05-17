@@ -7,7 +7,7 @@ Tugasnya:
   2. Membuat dan menampilkan window utama
   3. Menangani exception global jika perlu
 
-PIC: Anggota 3 (GUI Developer) — koordinasi dengan semua anggota
+PIC: Rafly (GUI Developer) — koordinasi dengan semua anggota
 """
 
 import sys
@@ -16,17 +16,11 @@ from gui.main_window import MainWindow
 
 
 def main():
-    """
-    Fungsi utama untuk menjalankan aplikasi.
-
-    TODO:
-    - Inisialisasi QApplication dengan sys.argv
-    - Buat instance MainWindow
-    - Tampilkan window (window.show())
-    - Jalankan event loop (app.exec_())
-    - Return exit code ke sys.exit()
-    """
-    pass
+    """Inisialisasi dan jalankan aplikasi VARCO."""
+    app    = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_())
 
 
 if __name__ == "__main__":
