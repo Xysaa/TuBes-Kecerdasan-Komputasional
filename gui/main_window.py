@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QSplitter, QMenuBar, QMenu, QAction, QStatusBar,
     QMessageBox, QFileDialog, QProgressBar, QLabel,
     QTabWidget, QTableWidget, QTableWidgetItem, QSpinBox,
-    QDoubleSpinBox, QPushButton, QFormLayout, QHeaderView
+    QDoubleSpinBox, QPushButton, QFormLayout, QHeaderView,QApplication
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon
