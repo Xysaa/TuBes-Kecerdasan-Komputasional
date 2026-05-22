@@ -1,311 +1,387 @@
 """
-gui/map_canvas.py — Kanvas Visualisasi Peta & Rute
-====================================================
-Menampilkan visualisasi interaktif:
-  - Titik-titik lokasi pengiriman di atas latar koordinat
-  - Rute optimal per kendaraan (warna berbeda tiap kendaraan)
-  - Animasi feromon bergerak (opsional, jika waktu cukup)
-  - Tooltip nama & prioritas saat hover node
+gui/map_canvas.py — Kanvas Peta Real dengan PyQtWebEngine + Folium
+==================================================================
+Menampilkan peta OpenStreetMap nyata menggunakan:
+  - folium        : generate HTML map dengan tile OSM
+  - PyQtWebEngine : embed browser di dalam GUI PyQt5
+  - QWebChannel   : komunikasi JavaScript ↔ Python untuk klik peta
 
-Menggunakan matplotlib embedded di PyQt5 via FigureCanvasQTAgg.
+Fitur:
+  - Peta real OpenStreetMap
+  - Klik peta → otomatis tambah lokasi ke tabel input
+  - Marker warna berdasarkan prioritas Fuzzy
+  - Rute per kendaraan dengan warna berbeda
+  - Popup info setiap marker
 
 PIC: Rafly (Data & Visualisasi)
-Kolaborasi: Jefri (embed ke main_window)
+Kolaborasi: Jefri (integrasi ke main_window)
+
+CHANGELOG:
+  - FIX: Rute terputus — perbaiki mapping index ACO → node objek
+  - FIX: Rute hilang saat zoom — hapus prefer_canvas=True
+  - FIX: Click handler inject dengan QTimer delay 500ms
 """
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QToolBar, QAction
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import numpy as np
+import os
+import tempfile
 
-# Warna untuk setiap kendaraan (maks 5 kendaraan)
+import folium
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtWebChannel import QWebChannel
+from PyQt5.QtCore import QObject, pyqtSlot, pyqtSignal, QUrl, QFile, QIODevice, Qt, QTimer
+
+# Warna per kendaraan (maks 5)
 VEHICLE_COLORS = ["#E74C3C", "#2ECC71", "#3498DB", "#F39C12", "#9B59B6"]
 
 
+# ── Bridge: jembatan JavaScript ↔ Python ─────────────────────────────────────
+
+class MapBridge(QObject):
+    """
+    Objek yang bisa dipanggil dari JavaScript via QWebChannel.
+    Ketika user klik peta, JS memanggil onMapClick() → Python emit sinyal.
+    """
+    location_clicked = pyqtSignal(float, float)  # lat, lon
+
+    @pyqtSlot(float, float)
+    def onMapClick(self, lat: float, lon: float):
+        self.location_clicked.emit(lat, lon)
+
+
+# ── Main Widget ───────────────────────────────────────────────────────────────
+
 class MapCanvas(QWidget):
     """
-    Widget kanvas untuk menampilkan peta dan rute pengiriman.
+    Widget peta real berbasis PyQtWebEngine + Folium.
+    Emit sinyal location_clicked(lat, lon) ketika user klik peta.
     """
+
+    location_clicked = pyqtSignal(float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Buat figure dan canvas matplotlib
-        self.figure = Figure(figsize=(8, 6))
-        self.canvas = FigureCanvas(self.figure)
-        self.ax = self.figure.add_subplot(111)
-
-        # Toolbar zoom/pan bawaan matplotlib
-        self.toolbar = NavigationToolbar(self.canvas, self)
-
-        # Layout: toolbar di atas, canvas di bawah
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)
+        layout.setSpacing(0)
+
+        # Info bar
+        self.info_label = QLabel("🗺️  Klik pada peta untuk menambah lokasi pengiriman")
+        self.info_label.setAlignment(Qt.AlignCenter)
+        self.info_label.setStyleSheet(
+            "background:#EBF5FB; padding:6px; font-size:11px; color:#2980B9; "
+            "border-bottom:1px solid #AED6F1;"
+        )
+
+        # Web view
+        self.web_view = QWebEngineView()
+        self.web_view.loadFinished.connect(self._on_load_finished)
+
+        # QWebChannel — komunikasi JS ↔ Python
+        self.channel = QWebChannel()
+        self.bridge  = MapBridge()
+        self.channel.registerObject("bridge", self.bridge)
+        self.web_view.page().setWebChannel(self.channel)
+        self.bridge.location_clicked.connect(self.location_clicked)
+
+        layout.addWidget(self.info_label)
+        layout.addWidget(self.web_view)
         self.setLayout(layout)
 
-        # State internal
-        self.current_nodes = []
+        self.current_nodes    = []
         self.current_solution = None
+        self._temp_file       = None
+        self._last_map        = None
 
         self._draw_empty_state()
 
-    # ------------------------------------------------------------------
-    # PRIVATE HELPERS
-    # ------------------------------------------------------------------
+    # ── Private ───────────────────────────────────────────────────────────────
+
+    def _get_webchannel_js(self) -> str:
+        """Baca qwebchannel.js dari resource Qt."""
+        f = QFile(":/qtwebchannel/qwebchannel.js")
+        if f.open(QIODevice.ReadOnly):
+            content = bytes(f.readAll()).decode("utf-8")
+            f.close()
+            return content
+        return ""
+
+    def _inject_scripts(self, html: str) -> str:
+        """
+        Inject qwebchannel.js inline ke HTML agar tidak perlu akses qrc://
+        dari konteks file lokal yang bisa diblokir browser engine.
+        """
+        webchannel_js = self._get_webchannel_js()
+        script_block = f"""
+        <script>
+        /* ── QWebChannel inline ── */
+        {webchannel_js}
+        </script>
+        """
+        return html.replace("</head>", script_block + "</head>", 1)
+
+    def _render(self, folium_map: folium.Map):
+        """Render folium map → file HTML sementara → tampilkan di web_view."""
+        html = folium_map.get_root().render()
+        html = self._inject_scripts(html)
+
+        # Hapus temp file lama
+        if self._temp_file:
+            try:
+                os.unlink(self._temp_file)
+            except Exception:
+                pass
+
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".html", delete=False, mode="w", encoding="utf-8"
+        )
+        tmp.write(html)
+        tmp.close()
+        self._temp_file = tmp.name
+
+        self.web_view.load(QUrl.fromLocalFile(self._temp_file))
+        self._last_map = folium_map
+
+    def _on_load_finished(self, ok: bool):
+        """
+        Dipanggil setelah halaman HTML selesai dimuat.
+        Delay 500ms agar Leaflet selesai inisialisasi objek map_*.
+        """
+        if not ok:
+            return
+        QTimer.singleShot(500, self._inject_click_handler)
+
+    def _inject_click_handler(self):
+        """
+        Inject JavaScript untuk setup QWebChannel + Leaflet click handler.
+        Dipanggil 500ms setelah halaman selesai load.
+        """
+        js = """
+        (function() {
+            if (typeof QWebChannel === 'undefined') {
+                console.error('[MapCanvas] QWebChannel tidak tersedia');
+                return;
+            }
+
+            new QWebChannel(qt.webChannelTransport, function(channel) {
+                var bridge = channel.objects.bridge;
+                if (!bridge) {
+                    console.error('[MapCanvas] Bridge tidak ditemukan di channel');
+                    return;
+                }
+
+                /* Cari objek Leaflet map — harus punya .on() dan .getCenter() */
+                var mapObj = null;
+                var keys = Object.keys(window);
+                for (var i = 0; i < keys.length; i++) {
+                    var key = keys[i];
+                    if (!key.startsWith('map_')) continue;
+                    try {
+                        var obj = window[key];
+                        if (obj &&
+                            typeof obj.on === 'function' &&
+                            typeof obj.getCenter === 'function') {
+                            mapObj = obj;
+                            break;
+                        }
+                    } catch(e) {}
+                }
+
+                if (!mapObj) {
+                    console.error('[MapCanvas] Objek peta Leaflet tidak ditemukan');
+                    return;
+                }
+
+                mapObj.on('click', function(e) {
+                    var lat = e.latlng.lat;
+                    var lng = e.latlng.lng;
+                    console.log('[MapCanvas] Klik terdeteksi:', lat, lng);
+                    bridge.onMapClick(lat, lng);
+                });
+
+                mapObj.getContainer().style.cursor = 'crosshair';
+                console.log('[MapCanvas] Click handler berhasil dipasang');
+            });
+        })();
+        """
+        self.web_view.page().runJavaScript(js)
+
+    def _build_base_map(self, center_lat=-5.39, center_lon=105.26,
+                        zoom=13) -> folium.Map:
+        """
+        Buat folium Map dengan tile OpenStreetMap.
+        CATATAN: prefer_canvas=True DIHAPUS — menyebabkan PolyLine hilang saat zoom.
+        """
+        return folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=zoom,
+            tiles="OpenStreetMap",
+        )
+
+    def _priority_icon(self, priority: float) -> folium.Icon:
+        """Return folium Icon berdasarkan skor prioritas."""
+        if priority >= 67:
+            return folium.Icon(color="red",    icon="arrow-up",   prefix="fa")
+        elif priority >= 34:
+            return folium.Icon(color="orange", icon="minus",      prefix="fa")
+        else:
+            return folium.Icon(color="green",  icon="arrow-down", prefix="fa")
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def _draw_empty_state(self):
-        """Tampilkan placeholder saat belum ada data."""
-        self.ax.clear()
-        self.ax.set_facecolor("#F8F9FA")
-        self.figure.patch.set_facecolor("#F8F9FA")
+        """Tampilkan peta kosong dengan instruksi."""
+        m = self._build_base_map()
+        folium.Marker(
+            location=[-5.3971, 105.2668],
+            tooltip="Ini adalah posisi Depot Pusat (contoh)",
+            popup="Klik di mana saja pada peta untuk menambah lokasi",
+            icon=folium.Icon(color="gray", icon="info-sign")
+        ).add_to(m)
+        self._render(m)
 
-        self.ax.text(
-            0.5, 0.5,
-            "Tambahkan lokasi dan jalankan optimasi",
-            transform=self.ax.transAxes,
-            ha="center", va="center",
-            fontsize=13, style="italic",
-            color="#AAAAAA"
-        )
-        self.ax.set_xticks([])
-        self.ax.set_yticks([])
-        for spine in self.ax.spines.values():
-            spine.set_edgecolor("#DDDDDD")
-
-        self.canvas.draw()
-
-    # ------------------------------------------------------------------
-    # PUBLIC API
-    # ------------------------------------------------------------------
-
-    def plot_nodes(self, nodes: list, depot, _skip_draw=False):
+    def plot_nodes(self, nodes: list, depot, _skip_render=False):
         """
-        Tampilkan semua titik lokasi di peta (sebelum ACO dijalankan).
+        Tampilkan marker semua lokasi di peta real.
 
-        Parameter:
-          nodes      : list[DeliveryNode] — titik pengiriman
-          depot      : DeliveryNode       — titik depot
-          _skip_draw : bool               — True jika dipanggil dari
-                                           plot_solution (draw ditunda)
+        Return:
+          folium.Map — map object (dipakai oleh plot_solution)
         """
-        self.ax.clear()
+        all_lats = [depot.lat] + [n.lat for n in nodes]
+        all_lons = [depot.lon] + [n.lon for n in nodes]
+        center_lat = sum(all_lats) / len(all_lats)
+        center_lon = sum(all_lons) / len(all_lons)
 
-        self.ax.set_facecolor("#F0F4F8")
-        self.figure.patch.set_facecolor("#FFFFFF")
+        m = self._build_base_map(center_lat, center_lon, zoom=14)
 
-        # --- Plot delivery nodes ---
-        lons = [n.lon for n in nodes]
-        lats = [n.lat for n in nodes]
-        priorities = [n.priority for n in nodes]
+        # Depot marker
+        folium.Marker(
+            location=[depot.lat, depot.lon],
+            popup=folium.Popup(
+                f"<b>⭐ {depot.name}</b><br><i>Depot / Titik Awal</i>",
+                max_width=200
+            ),
+            tooltip=f"⭐ {depot.name} (Depot)",
+            icon=folium.Icon(color="black", icon="home", prefix="fa")
+        ).add_to(m)
 
-        scatter = self.ax.scatter(
-            lons, lats,
-            c=priorities,
-            cmap="RdYlGn_r",
-            vmin=0, vmax=100,
-            s=90, zorder=5,
-            edgecolors="white", linewidths=0.8
-        )
+        # Delivery node markers
+        for node in nodes:
+            priority = getattr(node, "priority", 0.0)
+            label    = ("🔴 Tinggi" if priority >= 67
+                        else "🟡 Sedang" if priority >= 34
+                        else "🟢 Rendah")
 
-        # Anotasi nama node
-        for n in nodes:
-            self.ax.annotate(
-                n.name,
-                xy=(n.lon, n.lat),
-                xytext=(5, 5),
-                textcoords="offset points",
-                fontsize=7.5,
-                color="#333333",
-                zorder=6
+            popup_html = (
+                f"<b>{node.name}</b><br>"
+                f"Berat: <b>{node.weight_kg} kg</b><br>"
+                f"Deadline: <b>{node.deadline_h} jam</b><br>"
+                f"Prioritas: <b>{priority:.1f}</b> {label}"
             )
 
-        # --- Plot depot ---
-        self.ax.plot(
-            depot.lon, depot.lat,
-            marker="*",
-            markersize=16,
-            color="#1A1A2E",
-            zorder=7,
-            label="Depot",
-            linestyle="None"
-        )
-        self.ax.annotate(
-            depot.name,
-            xy=(depot.lon, depot.lat),
-            xytext=(6, 6),
-            textcoords="offset points",
-            fontsize=8,
-            fontweight="bold",
-            color="#1A1A2E",
-            zorder=8
-        )
+            folium.Marker(
+                location=[node.lat, node.lon],
+                popup=folium.Popup(popup_html, max_width=220),
+                tooltip=f"{node.name} | Prioritas: {priority:.0f}",
+                icon=self._priority_icon(priority)
+            ).add_to(m)
 
-        # --- Colorbar prioritas ---
-        cbar = self.figure.colorbar(scatter, ax=self.ax, pad=0.02, shrink=0.8)
-        cbar.set_label("Prioritas Pengiriman", fontsize=9)
-        cbar.ax.tick_params(labelsize=8)
-
-        # --- Label & judul ---
-        self.ax.set_xlabel("Longitude", fontsize=9)
-        self.ax.set_ylabel("Latitude", fontsize=9)
-        self.ax.set_title("Peta Lokasi Pengiriman", fontsize=11, fontweight="bold")
-        self.ax.tick_params(labelsize=8)
-
-        # Simpan nodes untuk dipakai plot_solution
         self.current_nodes = nodes
 
-        if not _skip_draw:
-            self.canvas.draw()
+        if not _skip_render:
+            self._render(m)
+
+        return m
 
     def plot_solution(self, solution: dict, nodes: list, depot, problem):
         """
-        Tampilkan rute optimal hasil ACO.
+        Tampilkan rute optimal di atas peta real dengan polyline berwarna.
 
-        Parameter:
-          solution : dict {'routes': list[list[int]], 'distance': float, 'history': list}
-          nodes    : list[DeliveryNode]
-          depot    : DeliveryNode
-          problem  : VRPProblem
+        FIX: ACO mengembalikan index matriks (0=depot, 1..n=delivery node).
+        Mapping dilakukan via index ke all_nodes list — bukan via node_id dict
+        — sehingga semua node selalu ditemukan dan rute tidak terputus.
         """
-        # Gambar base layer nodes dulu (tanpa draw)
-        self.plot_nodes(nodes, depot, _skip_draw=True)
+        m = self.plot_nodes(nodes, depot, _skip_render=True)
 
-        node_map = {n.node_id: n for n in nodes}
-        node_map[depot.node_id] = depot
-        routes = solution.get("routes", [])
+        # ── FIX: index-based mapping ──────────────────────────────────────────
+        # problem.get_all_nodes() → [depot, node1, node2, ...]
+        # Index 0 = depot, index 1..n = delivery nodes
+        # HARUS sama urutannya dengan yang dipakai ACO saat build dist_matrix
+        all_nodes     = problem.get_all_nodes()
+        routes        = solution.get("routes", [])
         total_dist_km = solution.get("distance", 0) / 1000.0
-
-        legend_patches = [
-            mpatches.Patch(color="#1A1A2E", label="Depot ★")
-        ]
 
         for vehicle_idx, route in enumerate(routes):
             if not route:
                 continue
 
             color = VEHICLE_COLORS[vehicle_idx % len(VEHICLE_COLORS)]
-            vehicle_label = f"Kendaraan {vehicle_idx + 1}"
 
-            # Bangun urutan titik: depot → node1 → ... → nodeN → depot
-            full_route = [depot.node_id] + route + [depot.node_id]
+            # route = list index matriks, misal [2, 1, 3]
+            # full_route_idx: depot(0) → 2 → 1 → 3 → depot(0)
+            full_route_idx = [0] + list(route) + [0]
 
-            for step in range(len(full_route) - 1):
-                id_from = full_route[step]
-                id_to = full_route[step + 1]
+            # Ambil koordinat via index → all_nodes
+            coords = []
+            for idx in full_route_idx:
+                if 0 <= idx < len(all_nodes):
+                    node = all_nodes[idx]
+                    coords.append([node.lat, node.lon])
+                else:
+                    print(f"[WARN] plot_solution: index {idx} di luar "
+                          f"jangkauan all_nodes (len={len(all_nodes)})")
 
-                if id_from not in node_map or id_to not in node_map:
-                    continue
+            if len(coords) >= 2:
+                # Garis rute — tetap ada saat zoom karena prefer_canvas dihapus
+                folium.PolyLine(
+                    locations=coords,
+                    color=color,
+                    weight=5,
+                    opacity=0.85,
+                    tooltip=f"Kendaraan {vehicle_idx + 1}",
+                ).add_to(m)
 
-                n_from = node_map[id_from]
-                n_to = node_map[id_to]
-
-                # Garis rute
-                self.ax.plot(
-                    [n_from.lon, n_to.lon],
-                    [n_from.lat, n_to.lat],
-                    color=color, linewidth=1.8,
-                    alpha=0.75, zorder=3
-                )
-
-                # Panah arah di tengah segmen
-                mid_lon = (n_from.lon + n_to.lon) / 2
-                mid_lat = (n_from.lat + n_to.lat) / 2
-                d_lon = n_to.lon - n_from.lon
-                d_lat = n_to.lat - n_from.lat
-
-                self.ax.annotate(
-                    "",
-                    xy=(mid_lon + d_lon * 0.01, mid_lat + d_lat * 0.01),
-                    xytext=(mid_lon - d_lon * 0.01, mid_lat - d_lat * 0.01),
-                    arrowprops=dict(
-                        arrowstyle="->",
+                # Panah arah di setiap midpoint segmen
+                for i in range(len(coords) - 1):
+                    mid = [
+                        (coords[i][0] + coords[i + 1][0]) / 2,
+                        (coords[i][1] + coords[i + 1][1]) / 2,
+                    ]
+                    folium.RegularPolygonMarker(
+                        location=mid,
+                        number_of_sides=3,
+                        radius=7,
                         color=color,
-                        lw=1.6
-                    ),
-                    zorder=4
-                )
+                        fill=True,
+                        fill_color=color,
+                        fill_opacity=0.9,
+                        rotation=45
+                    ).add_to(m)
 
-            legend_patches.append(
-                mpatches.Patch(color=color, label=vehicle_label)
-            )
-
-        # --- Legend & judul ---
-        self.ax.legend(
-            handles=legend_patches,
-            loc="upper left",
-            fontsize=8,
-            framealpha=0.9,
-            edgecolor="#CCCCCC"
+        # Banner judul di atas peta
+        banner = (
+            f'<div style="position:fixed;top:12px;left:50%;'
+            f'transform:translateX(-50%);background:white;padding:8px 18px;'
+            f'border-radius:20px;box-shadow:0 2px 10px rgba(0,0,0,.25);'
+            f'z-index:9999;font-family:Arial;font-size:13px;font-weight:bold;'
+            f'color:#1A1A2E;">'
+            f'🚚 Rute Optimal &nbsp;|&nbsp; Total Jarak: {total_dist_km:.2f} km'
+            f'</div>'
         )
-        self.ax.set_title(
-            f"Rute Optimal — Total Jarak: {total_dist_km:.2f} km",
-            fontsize=11, fontweight="bold"
-        )
+        m.get_root().html.add_child(folium.Element(banner))
 
         self.current_solution = solution
-        self.canvas.draw()
-
-    def animate_iteration(self, pheromone_matrix, nodes: list, depot):
-        """
-        (Fitur opsional) Visualisasi intensitas feromon per iterasi.
-
-        Parameter:
-          pheromone_matrix : numpy array n×n feromon saat ini
-          nodes            : list[DeliveryNode]
-          depot            : DeliveryNode
-
-        Catatan:
-          Index 0 di pheromone_matrix = depot, 1..n = nodes,
-          sesuai urutan problem.get_all_nodes().
-        """
-        all_nodes = [depot] + list(nodes)
-        n = len(all_nodes)
-
-        if pheromone_matrix is None or pheromone_matrix.shape != (n, n):
-            return
-
-        # Normalisasi nilai feromon ke range [0, 1] untuk opacity
-        p_max = pheromone_matrix.max()
-        p_min = pheromone_matrix.min()
-        p_range = p_max - p_min if p_max != p_min else 1.0
-
-        for i in range(n):
-            for j in range(i + 1, n):
-                intensity = (pheromone_matrix[i][j] - p_min) / p_range
-                if intensity < 0.1:
-                    # Skip garis yang hampir tidak terlihat
-                    continue
-
-                n_i = all_nodes[i]
-                n_j = all_nodes[j]
-
-                self.ax.plot(
-                    [n_i.lon, n_j.lon],
-                    [n_i.lat, n_j.lat],
-                    color="#F39C12",
-                    linewidth=intensity * 3,
-                    alpha=intensity * 0.6,
-                    zorder=2
-                )
-
-        self.canvas.draw_idle()
+        self._render(m)
 
     def clear(self):
-        """Reset canvas ke empty state."""
-        self.current_nodes = []
+        """Reset ke empty state."""
+        self.current_nodes    = []
         self.current_solution = None
         self._draw_empty_state()
 
     def save_figure(self, filepath: str):
-        """
-        Simpan visualisasi saat ini ke file gambar.
-
-        Parameter:
-          filepath : str — path lengkap file output (misal: "/home/user/rute.png")
-        """
-        self.figure.savefig(filepath, dpi=150, bbox_inches="tight")
+        """Simpan peta sebagai file HTML."""
+        if self._temp_file and os.path.exists(self._temp_file):
+            import shutil
+            shutil.copy(self._temp_file, filepath)

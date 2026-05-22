@@ -15,6 +15,11 @@ Catatan Penting:
 
 PIC: Anggota 4 (Data & Visualisasi)
 Kolaborasi: Anggota 1 (output matriks jarak ke ACO)
+
+CHANGELOG:
+  - FIX: Download graf dengan largest_component=True agar graf terkoneksi penuh
+  - FIX: Tambah logging jumlah fallback Euclidean agar mudah dideteksi
+  - FIX: Gunakan ox.distance.nearest_nodes (API baru osmnx >= 1.0)
 """
 
 import os
@@ -43,12 +48,11 @@ class OSMHandler:
           city       : Nama kota/area untuk diunduh dari OSM
           cache_file : Path file .graphml untuk menyimpan/memuat cache graf
         """
-        self.city = city
+        self.city       = city
         self.cache_file = cache_file
-        self.graph = None
+        self.graph      = None
         self.geolocator = Nominatim(user_agent="vrp_aco_app")
 
-        # Buat direktori cache jika belum ada
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -60,28 +64,43 @@ class OSMHandler:
         Muat graf jalan: dari cache jika ada, atau unduh dari OSM.
 
         Parameter:
-          force_download: Jika True, selalu unduh ulang meski cache ada
+          force_download: Jika True, selalu unduh ulang meski cache ada.
         """
         if os.path.exists(self.cache_file) and not force_download:
             import osmnx as ox
             print(f"Memuat graf dari cache: {self.cache_file}")
             self.graph = ox.load_graphml(self.cache_file)
-            print("Graf berhasil dimuat dari cache.")
+            print(f"Graf berhasil dimuat: {len(self.graph.nodes)} node, "
+                  f"{len(self.graph.edges)} edge.")
         else:
             self._download_graph()
 
     def _download_graph(self):
         """
         Unduh graf jalan dari OpenStreetMap dan simpan ke cache.
+
+        FIX: Tambah retain_all=False (default) agar hanya komponen
+        terbesar yang disimpan → dijamin strongly connected → tidak ada
+        path yang putus → tidak ada fallback Euclidean.
         """
         import osmnx as ox
         try:
             print(f"Mengunduh graf jalan untuk '{self.city}' dari OSM...")
-            self.graph = ox.graph_from_place(self.city, network_type='drive')
+            # retain_all=False (default) → ambil hanya weakly connected component terbesar
+            self.graph = ox.graph_from_place(
+                self.city,
+                network_type='drive',
+                retain_all=False,      # hanya ambil komponen terbesar
+            )
+            # Pastikan graf strongly connected (untuk routing dua arah)
+            self.graph = ox.utils_graph.get_largest_component(
+                self.graph, strongly=True
+            )
             ox.save_graphml(self.graph, self.cache_file)
-            print(f"Graf berhasil diunduh dan disimpan ke: {self.cache_file}")
+            print(f"Graf disimpan ke: {self.cache_file}")
+            print(f"  → {len(self.graph.nodes)} node, {len(self.graph.edges)} edge")
         except ConnectionError as e:
-            print(f"[ERROR] Tidak ada koneksi internet. Gagal mengunduh graf: {e}")
+            print(f"[ERROR] Tidak ada koneksi internet: {e}")
             raise
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -92,11 +111,8 @@ class OSMHandler:
         """
         Konversi nama tempat ke koordinat (lat, lon).
 
-        Parameter:
-          place_name: Nama lokasi, misal "Pasar Tengah, Bandar Lampung"
-
         Return:
-          tuple (lat: float, lon: float) atau (None, None) jika gagal
+          tuple (lat, lon) atau (None, None) jika gagal.
         """
         try:
             location = self.geolocator.geocode(place_name)
@@ -120,19 +136,17 @@ class OSMHandler:
         """
         Temukan node OSM terdekat dari koordinat lat/lon.
 
-        Parameter:
-          lat, lon: Koordinat geografis
+        Catatan: osmnx menerima (X=lon, Y=lat), bukan (lat, lon)!
 
         Return:
           int: ID node OSM terdekat di self.graph
-
-        Catatan: osmnx menerima (X=lon, Y=lat), bukan (lat, lon)!
         """
         import osmnx as ox
         if self.graph is None:
             raise RuntimeError(
                 "Graf belum dimuat. Panggil load_graph() terlebih dahulu."
             )
+        # nearest_nodes(G, X=lon, Y=lat)
         return ox.nearest_nodes(self.graph, lon, lat)
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -154,65 +168,75 @@ class OSMHandler:
                 "Graf belum dimuat. Panggil load_graph() terlebih dahulu."
             )
 
-        all_nodes = problem.get_all_nodes()
-        n = len(all_nodes)
+        all_nodes = problem.get_all_nodes()   # [depot, node1, ..., nodeN]
+        n         = len(all_nodes)
 
-        # Snap semua node ke graf OSM dan simpan osm_node_id ke masing-masing node
+        print(f"Snapping {n} lokasi ke graf OSM...")
+
+        # Snap semua node ke graf OSM
         osm_ids = []
         for node in all_nodes:
             osm_id = self.snap_to_graph(node.lat, node.lon)
-            node.osm_node_id = osm_id
+            node.osm_node_id = osm_id   # simpan untuk debugging
             osm_ids.append(osm_id)
+            print(f"  [{node.name}] → OSM node {osm_id}")
 
-        # Buat matriks n×n (diagonal = 0)
-        matrix = np.zeros((n, n), dtype=float)
+        # Buat matriks n×n
+        matrix         = np.zeros((n, n), dtype=float)
+        fallback_count = 0
+
+        print(f"Menghitung {n*n - n} pasang jarak via shortest path OSM...")
 
         for i in range(n):
             for j in range(n):
                 if i != j:
-                    matrix[i][j] = self._get_path_length(osm_ids[i], osm_ids[j])
+                    dist, used_fallback = self._get_path_length(
+                        osm_ids[i], osm_ids[j]
+                    )
+                    matrix[i][j] = dist
+                    if used_fallback:
+                        fallback_count += 1
 
-        # Simpan ke problem dan kembalikan sebagai nested list
-        dist_list = matrix.tolist()
-        problem.dist_matrix = dist_list
+        if fallback_count > 0:
+            print(f"[WARN] {fallback_count} pasang node menggunakan fallback "
+                  f"Euclidean (jarak lurus). Coba force_download=True untuk "
+                  f"memperbarui cache graf.")
+        else:
+            print("Semua jarak dihitung via jalan nyata (tidak ada fallback).")
+
+        dist_list             = matrix.tolist()
+        problem.dist_matrix   = dist_list
         return dist_list
 
     # ──────────────────────────────────────────────────────────────────────────
     # Path Length Calculation
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _get_path_length(self, node_a: int, node_b: int) -> float:
+    def _get_path_length(self, node_a: int, node_b: int) -> tuple:
         """
         Hitung jarak jalan terpendek antara dua node OSM.
 
-        Parameter:
-          node_a, node_b: ID node OSM
-
         Return:
-          float: Jarak dalam meter
+          tuple (jarak_meter: float, used_fallback: bool)
         """
         import networkx as nx
         try:
-            return nx.shortest_path_length(
+            dist = nx.shortest_path_length(
                 self.graph, node_a, node_b, weight='length'
             )
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            # Fallback ke jarak Euclidean (Haversine) jika path tidak ada
-            print(
-                f"[WARN] Tidak ada path antara node {node_a} dan {node_b}. "
-                "Menggunakan fallback Euclidean."
-            )
-            return self._euclidean_fallback(node_a, node_b)
+            return dist, False
+        except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
+            print(f"[WARN] Tidak ada path antara node {node_a} ↔ {node_b}: {e}. "
+                  f"Menggunakan fallback Euclidean.")
+            return self._euclidean_fallback(node_a, node_b), True
 
     def _euclidean_fallback(self, node_a: int, node_b: int) -> float:
         """
-        Hitung jarak Euclidean (garis lurus) sebagai fallback menggunakan
-        rumus Haversine untuk akurasi pada koordinat geografis.
+        Hitung jarak garis lurus (Haversine) sebagai fallback.
 
         Return:
           float: Jarak dalam meter
         """
-        # Ambil koordinat dari graf (y=lat, x=lon dalam OSMnx)
         lat_a = self.graph.nodes[node_a]['y']
         lon_a = self.graph.nodes[node_a]['x']
         lat_b = self.graph.nodes[node_b]['y']
@@ -227,17 +251,16 @@ class OSMHandler:
 
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
-    Hitung jarak antara dua titik koordinat geografis menggunakan rumus Haversine.
-    Referensi: https://en.wikipedia.org/wiki/Haversine_formula
+    Hitung jarak antara dua koordinat geografis menggunakan rumus Haversine.
 
     Return:
       float: Jarak dalam meter
     """
     R = 6_371_000  # Jari-jari bumi dalam meter
 
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    d_phi = math.radians(lat2 - lat1)
+    phi1     = math.radians(lat1)
+    phi2     = math.radians(lat2)
+    d_phi    = math.radians(lat2 - lat1)
     d_lambda = math.radians(lon2 - lon1)
 
     a = (math.sin(d_phi / 2) ** 2
