@@ -22,11 +22,11 @@ menentukan rute pengiriman paling efisien untuk beberapa kendaraan ke banyak tit
 
 | No | Nama | NIM | Role |
 |----|------|-----|------|
-| 1  | Nama Anggota 1 | 2xxxxxxxxx | ACO Engineer |
-| 2  | Nama Anggota 2 | 2xxxxxxxxx | Fuzzy Logic Developer |
-| 3  | Nama Anggota 3 | 2xxxxxxxxx | GUI Developer |
-| 4  | Nama Anggota 4 | 2xxxxxxxxx | Data & Visualisasi |
-| 5  | Nama Anggota 5 | 2xxxxxxxxx | QA, Docs & Integrasi |
+| 1  | Rifka Priseilla Br Silitonga | 123140024 |  OSM Handler|
+| 2  | Annisa Al-Qoriah | 123140030 | Fuzzy Logic Developer |
+| 3  | STEVANUS CAHYA ANGGARA | 123140039 | ACO Engineer |
+| 4  | MUHAMMAD RAFLY YAHYA RAMADHAN | 123140148 | GUI Developer|
+| 5  | Jefri Wahyu Fernando Sembiring | 123140206 | VRP Model |
 
 ---
 
