@@ -3,8 +3,8 @@
   "depot": {
     "node_id": 0,
     "name": "Depot Pusat",
-    "lat": -5.3971,
-    "lon": 105.2668,
+    "lat": -5.3974,
+    "lon": 105.2669,
     "weight_kg": 0,
     "deadline_h": 99
   },
@@ -13,30 +13,30 @@
       "node_id": 1,
       "name": "Pasar Tengah",
       "lat": -5.4244,
-      "lon": 105.2659,
+      "lon": 105.2654,
       "weight_kg": 10.5,
       "deadline_h": 3
     },
     {
       "node_id": 2,
       "name": "Mall Boemi Kedaton",
-      "lat": -5.3906,
-      "lon": 105.2560,
+      "lat": -5.3909,
+      "lon": 105.2552,
       "weight_kg": 25.0,
       "deadline_h": 12
     },
     {
       "node_id": 3,
       "name": "Stasiun Tanjungkarang",
-      "lat": -5.4189,
-      "lon": 105.2612,
+      "lat": -5.419,
+      "lon": 105.2613,
       "weight_kg": 5.0,
       "deadline_h": 6
     },
     {
       "node_id": 4,
       "name": "Universitas Lampung",
-      "lat": -5.3666,
+      "lat": -5.3677,
       "lon": 105.2424,
       "weight_kg": 15.0,
       "deadline_h": 24
@@ -44,14 +44,104 @@
     {
       "node_id": 5,
       "name": "RS Urip Sumoharjo",
-      "lat": -5.3796,
-      "lon": 105.2567,
+      "lat": -5.3798,
+      "lon": 105.2569,
       "weight_kg": 8.0,
       "deadline_h": 2
+    },
+    {
+      "node_id": 6,
+      "name": "RSUD Abdul Moeloek",
+      "lat": -5.4044,
+      "lon": 105.2597,
+      "weight_kg": 12.0,
+      "deadline_h": 4
+    },
+    {
+      "node_id": 7,
+      "name": "Pasar Bambu Kuning",
+      "lat": -5.4211,
+      "lon": 105.2695,
+      "weight_kg": 7.5,
+      "deadline_h": 5
+    },
+    {
+      "node_id": 8,
+      "name": "Mal Kartini",
+      "lat": -5.415,
+      "lon": 105.2652,
+      "weight_kg": 18.0,
+      "deadline_h": 8
+    },
+    {
+      "node_id": 9,
+      "name": "Masjid Agung Al-Anwar",
+      "lat": -5.4203,
+      "lon": 105.2559,
+      "weight_kg": 3.0,
+      "deadline_h": 10
+    },
+    {
+      "node_id": 10,
+      "name": "Terminal Rajabasa",
+      "lat": -5.3575,
+      "lon": 105.2558,
+      "weight_kg": 20.0,
+      "deadline_h": 16
+    },
+    {
+      "node_id": 11,
+      "name": "Chandra Superstore",
+      "lat": -5.4022,
+      "lon": 105.2643,
+      "weight_kg": 9.0,
+      "deadline_h": 7
+    },
+    {
+      "node_id": 12,
+      "name": "ITERA",
+      "lat": -5.3612,
+      "lon": 105.3071,
+      "weight_kg": 11.0,
+      "deadline_h": 20
+    },
+    {
+      "node_id": 13,
+      "name": "Taman Dipangga",
+      "lat": -5.4289,
+      "lon": 105.2595,
+      "weight_kg": 4.0,
+      "deadline_h": 9
+    },
+    {
+      "node_id": 14,
+      "name": "Hotel Novotel Lampung",
+      "lat": -5.401,
+      "lon": 105.27,
+      "weight_kg": 14.0,
+      "deadline_h": 15
+    },
+    {
+      "node_id": 15,
+      "name": "Universitas Bandar Lampung",
+      "lat": -5.3839,
+      "lon": 105.2507,
+      "weight_kg": 6.0,
+      "deadline_h": 18
     }
   ],
   "vehicles": [
-    { "vehicle_id": 1, "capacity_kg": 50.0 },
-    { "vehicle_id": 2, "capacity_kg": 50.0 }
+    {
+      "vehicle_id": 1,
+      "capacity_kg": 80.0
+    },
+    {
+      "vehicle_id": 2,
+      "capacity_kg": 80.0
+    },
+    {
+      "vehicle_id": 3,
+      "capacity_kg": 80.0
+    }
   ]
 }

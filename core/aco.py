@@ -118,44 +118,66 @@ class ACOSolver:
         """
         Satu semut membangun solusi rute untuk semua kendaraan.
 
+        Strategi distribusi: node dibagi terlebih dahulu secara proporsional
+        ke setiap kendaraan (target_load = total_weight / n_vehicles) agar
+        beban tersebar merata. Kendaraan berhenti mengambil node baru saat
+        sudah mendekati target beban, kecuali masih ada sisa node.
+
         Index node di dist_matrix: 0 = depot, 1..n = delivery nodes.
         """
-        all_nodes   = self.problem.get_all_nodes()  # [depot, node1, node2, ...]
+        all_nodes   = self.problem.get_all_nodes()
         n_delivery  = len(self.problem.nodes)
-        # Index 1..n = delivery nodes
+        n_vehicles  = len(self.problem.vehicles)
+
         unvisited   = list(range(1, n_delivery + 1))
-        random.shuffle(unvisited)  # acak urutan awal agar eksplorasi lebih baik
+        random.shuffle(unvisited)
+
+        # Hitung target beban per kendaraan untuk distribusi merata
+        total_weight  = sum(all_nodes[i].weight_kg for i in unvisited)
+        target_load   = total_weight / n_vehicles  # beban ideal per kendaraan
 
         routes = []
 
-        for vehicle in self.problem.vehicles:
+        for v_idx, vehicle in enumerate(self.problem.vehicles):
             if not unvisited:
-                break
+                routes.append([])
+                continue
 
-            route        = []   # simpan index node (bukan node_id)
-            current      = 0    # mulai dari depot (index 0)
+            route        = []
+            current      = 0
             vehicle_load = 0.0
 
+            # Kendaraan terakhir: ambil semua sisa node tanpa batasan target
+            is_last_vehicle = (v_idx == n_vehicles - 1)
+
             while unvisited:
+                # Jika sudah mendekati target DAN bukan kendaraan terakhir,
+                # berhenti agar kendaraan berikutnya mendapat jatah yang cukup
+                remaining_vehicles = n_vehicles - v_idx - 1
+                if (not is_last_vehicle
+                        and remaining_vehicles > 0
+                        and vehicle_load >= target_load):
+                    # Cek apakah kendaraan berikutnya masih bisa menampung sisa
+                    remaining_weight = sum(all_nodes[i].weight_kg for i in unvisited)
+                    if remaining_weight <= remaining_vehicles * vehicle.capacity_kg:
+                        break  # kendaraan ini sudah cukup, beri giliran berikutnya
+
                 next_node = self._select_next_node(
                     current, unvisited, vehicle_load, vehicle.capacity_kg
                 )
                 if next_node == -1:
-                    break  # kendaraan penuh atau tidak ada kandidat
+                    break  # kapasitas penuh
 
                 route.append(next_node)
                 unvisited.remove(next_node)
 
-                # Akumulasi berat muatan
-                # Index di all_nodes: delivery node ke-i ada di index i+1
                 node_obj      = all_nodes[next_node]
                 vehicle_load += node_obj.weight_kg
                 current       = next_node
 
             routes.append(route)
 
-        # Sisa node yang tidak sempat dikunjungi → masukkan ke rute terakhir
-        # (fallback agar semua node selalu terkunjungi)
+        # Fallback: sisa node yang belum terkunjungi → kendaraan terakhir
         if unvisited and routes:
             routes[-1].extend(unvisited)
 

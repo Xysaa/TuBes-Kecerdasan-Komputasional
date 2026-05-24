@@ -262,16 +262,41 @@ class MapCanvas(QWidget):
 
         return m
 
+    def _get_road_path_coords(self, osm_graph, osm_id_a: int, osm_id_b: int) -> list:
+        """
+        Ambil koordinat seluruh node dalam shortest path antara dua OSM node.
+        Return list of [lat, lon] mengikuti jalan nyata.
+        Fallback ke garis lurus jika path tidak ditemukan.
+        """
+        import networkx as nx
+        try:
+            path_nodes = nx.shortest_path(osm_graph, osm_id_a, osm_id_b, weight='length')
+            return [
+                [osm_graph.nodes[n]['y'], osm_graph.nodes[n]['x']]
+                for n in path_nodes
+            ]
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            # Fallback garis lurus jika path tidak ada
+            a = osm_graph.nodes[osm_id_a]
+            b = osm_graph.nodes[osm_id_b]
+            return [[a['y'], a['x']], [b['y'], b['x']]]
+
     def plot_solution(self, solution: dict, nodes: list, depot, problem):
         """
         Tampilkan rute optimal di atas peta real dengan polyline berwarna.
+        Polyline mengikuti jalan nyata via shortest path OSM (bukan garis lurus).
         """
+        import math as _math
+
         m = self.plot_nodes(nodes, depot, _skip_render=True)
 
         node_map              = {n.node_id: n for n in nodes}
         node_map[depot.node_id] = depot
         routes                = solution.get("routes", [])
         total_dist_km         = solution.get("distance", 0) / 1000.0
+
+        # Ambil OSM graph dari problem jika tersedia (untuk road-following polyline)
+        osm_graph = getattr(problem, 'osm_graph', None)
 
         for vehicle_idx, route in enumerate(routes):
             if not route:
@@ -280,51 +305,64 @@ class MapCanvas(QWidget):
             color      = VEHICLE_COLORS[vehicle_idx % len(VEHICLE_COLORS)]
             full_route = [depot.node_id] + list(route) + [depot.node_id]
 
-            coords = [
-                [node_map[nid].lat, node_map[nid].lon]
-                for nid in full_route if nid in node_map
-            ]
+            for seg_idx in range(len(full_route) - 1):
+                nid_a = full_route[seg_idx]
+                nid_b = full_route[seg_idx + 1]
 
-            if len(coords) >= 2:
-                folium.PolyLine(
-                    locations=coords,
-                    color=color,
-                    weight=5,
-                    opacity=0.85,
-                    tooltip=f"Kendaraan {vehicle_idx + 1}",
-                ).add_to(m)
+                if nid_a not in node_map or nid_b not in node_map:
+                    continue
 
-                # Panah arah di midpoint setiap segmen menggunakan DivIcon
-                # (RegularPolygonMarker deprecated — tidak kompatibel Leaflet >= 1.8)
-                import math as _math
-                for i in range(len(coords) - 1):
-                    mid = [
-                        (coords[i][0] + coords[i+1][0]) / 2,
-                        (coords[i][1] + coords[i+1][1]) / 2,
-                    ]
-                    # Hitung sudut rotasi panah berdasarkan arah segmen
-                    dy = coords[i+1][0] - coords[i][0]
-                    dx = coords[i+1][1] - coords[i][1]
-                    angle = _math.degrees(_math.atan2(dx, dy))
+                node_a = node_map[nid_a]
+                node_b = node_map[nid_b]
 
-                    arrow_html = (
-                        f'<div style="'
-                        f'width:0;height:0;'
-                        f'border-left:6px solid transparent;'
-                        f'border-right:6px solid transparent;'
-                        f'border-bottom:12px solid {color};'
-                        f'transform:rotate({angle:.1f}deg);'
-                        f'opacity:0.85;'
-                        f'"></div>'
+                # Gunakan OSM path jika graph tersedia, fallback ke garis lurus
+                if (osm_graph is not None
+                        and getattr(node_a, 'osm_node_id', None) is not None
+                        and getattr(node_b, 'osm_node_id', None) is not None):
+                    seg_coords = self._get_road_path_coords(
+                        osm_graph, node_a.osm_node_id, node_b.osm_node_id
                     )
-                    folium.Marker(
-                        location=mid,
-                        icon=folium.DivIcon(
-                            html=arrow_html,
-                            icon_size=(12, 12),
-                            icon_anchor=(6, 6),
-                        )
+                else:
+                    seg_coords = [
+                        [node_a.lat, node_a.lon],
+                        [node_b.lat, node_b.lon],
+                    ]
+
+                if len(seg_coords) >= 2:
+                    folium.PolyLine(
+                        locations=seg_coords,
+                        color=color,
+                        weight=5,
+                        opacity=0.85,
+                        tooltip=f"Kendaraan {vehicle_idx + 1}",
                     ).add_to(m)
+
+                    # Panah arah di midpoint segmen
+                    mid_idx = len(seg_coords) // 2
+                    if mid_idx < len(seg_coords) - 1:
+                        mid = seg_coords[mid_idx]
+                        nxt = seg_coords[mid_idx + 1]
+                        dy = nxt[0] - mid[0]
+                        dx = nxt[1] - mid[1]
+                        angle = _math.degrees(_math.atan2(dx, dy))
+                        arrow_html = (
+                            f'<div style="'
+                            f'width:0;height:0;'
+                            f'border-left:6px solid transparent;'
+                            f'border-right:6px solid transparent;'
+                            f'border-bottom:12px solid {color};'
+                            f'transform:rotate({angle:.1f}deg);'
+                            f'opacity:0.85;'
+                            f'"></div>'
+                        )
+                        folium.Marker(
+                            location=mid,
+                            icon=folium.DivIcon(
+                                html=arrow_html,
+                                icon_size=(12, 12),
+                                icon_anchor=(6, 6),
+                            )
+                        ).add_to(m)
 
         # Banner total jarak di atas peta
         banner = (

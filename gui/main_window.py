@@ -375,6 +375,8 @@ class MainWindow(QMainWindow):
             osm.load_graph()
             dist_matrix = osm.compute_distance_matrix(self.current_problem)
             self.current_problem.dist_matrix = dist_matrix
+            # Simpan graph OSM ke problem agar map_canvas bisa gambar rute mengikuti jalan nyata
+            self.current_problem.osm_graph = osm.graph
 
             self.status_label.setText("Mengevaluasi prioritas dengan Fuzzy Logic...")
             QApplication.processEvents()
@@ -419,7 +421,7 @@ class MainWindow(QMainWindow):
             self.current_problem.depot,
             self.current_problem
         )
-        self.result_panel.update_results(solution, self.current_problem.nodes, elapsed_time)
+        self.result_panel.update_results(solution, self.current_problem.nodes, elapsed_time, self.current_problem)
 
     def on_solver_error(self, error_message: str):
         self.progress_bar.setVisible(False)
