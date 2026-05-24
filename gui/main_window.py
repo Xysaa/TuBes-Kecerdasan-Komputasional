@@ -268,6 +268,7 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.splitter)
         self.input_panel.btn_run.clicked.connect(self.run_optimization)
+        self.result_panel.btn_export.clicked.connect(self.export_results)
 
         # ── FIX: sambungkan sinyal klik peta ke handler penambah lokasi ───────
         self.map_canvas.location_clicked.connect(self._on_map_clicked)

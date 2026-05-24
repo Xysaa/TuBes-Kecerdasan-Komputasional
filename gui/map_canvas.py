@@ -7,29 +7,25 @@ Menampilkan peta OpenStreetMap nyata menggunakan:
   - QWebChannel   : komunikasi JavaScript ↔ Python untuk klik peta
 
 Fitur:
-  - Peta real OpenStreetMap
+  - Peta real OpenStreetMap (full height, tanpa bar terpisah)
   - Klik peta → otomatis tambah lokasi ke tabel input
   - Marker warna berdasarkan prioritas Fuzzy
   - Rute per kendaraan dengan warna berbeda
   - Popup info setiap marker
+  - Info "klik untuk tambah lokasi" sebagai overlay di dalam peta
 
 PIC: Rafly (Data & Visualisasi)
 Kolaborasi: Jefri (integrasi ke main_window)
-
-CHANGELOG:
-  - FIX: Rute terputus — perbaiki mapping index ACO → node objek
-  - FIX: Rute hilang saat zoom — hapus prefer_canvas=True
-  - FIX: Click handler inject dengan QTimer delay 500ms
 """
 
 import os
 import tempfile
 
 import folium
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt5.QtWidgets import QWidget, QVBoxLayout
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWebChannel import QWebChannel
-from PyQt5.QtCore import QObject, pyqtSlot, pyqtSignal, QUrl, QFile, QIODevice, Qt, QTimer
+from PyQt5.QtCore import QObject, pyqtSlot, pyqtSignal, QUrl, QFile, QIODevice
 
 # Warna per kendaraan (maks 5)
 VEHICLE_COLORS = ["#E74C3C", "#2ECC71", "#3498DB", "#F39C12", "#9B59B6"]
@@ -62,21 +58,17 @@ class MapCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        # Layout: web_view mengisi seluruh widget tanpa widget lain
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Info bar
-        self.info_label = QLabel("🗺️  Klik pada peta untuk menambah lokasi pengiriman")
-        self.info_label.setAlignment(Qt.AlignCenter)
-        self.info_label.setStyleSheet(
-            "background:#EBF5FB; padding:6px; font-size:11px; color:#2980B9; "
-            "border-bottom:1px solid #AED6F1;"
-        )
-
         # Web view
         self.web_view = QWebEngineView()
         self.web_view.loadFinished.connect(self._on_load_finished)
+
+        layout.addWidget(self.web_view)
+        self.setLayout(layout)
 
         # QWebChannel — komunikasi JS ↔ Python
         self.channel = QWebChannel()
@@ -85,14 +77,10 @@ class MapCanvas(QWidget):
         self.web_view.page().setWebChannel(self.channel)
         self.bridge.location_clicked.connect(self.location_clicked)
 
-        layout.addWidget(self.info_label)
-        layout.addWidget(self.web_view)
-        self.setLayout(layout)
-
+        # State internal
         self.current_nodes    = []
         self.current_solution = None
         self._temp_file       = None
-        self._last_map        = None
 
         self._draw_empty_state()
 
@@ -108,10 +96,7 @@ class MapCanvas(QWidget):
         return ""
 
     def _inject_scripts(self, html: str) -> str:
-        """
-        Inject qwebchannel.js inline ke HTML agar tidak perlu akses qrc://
-        dari konteks file lokal yang bisa diblokir browser engine.
-        """
+        """Inject qwebchannel.js inline ke HTML."""
         webchannel_js = self._get_webchannel_js()
         script_block = f"""
         <script>
@@ -141,67 +126,38 @@ class MapCanvas(QWidget):
         self._temp_file = tmp.name
 
         self.web_view.load(QUrl.fromLocalFile(self._temp_file))
-        self._last_map = folium_map
 
     def _on_load_finished(self, ok: bool):
-        """
-        Dipanggil setelah halaman HTML selesai dimuat.
-        Delay 500ms agar Leaflet selesai inisialisasi objek map_*.
-        """
+        """Inject JS untuk setup QWebChannel + click handler setelah halaman load."""
         if not ok:
             return
-        QTimer.singleShot(500, self._inject_click_handler)
 
-    def _inject_click_handler(self):
-        """
-        Inject JavaScript untuk setup QWebChannel + Leaflet click handler.
-        Dipanggil 500ms setelah halaman selesai load.
-        """
         js = """
         (function() {
-            if (typeof QWebChannel === 'undefined') {
-                console.error('[MapCanvas] QWebChannel tidak tersedia');
-                return;
-            }
+            if (typeof QWebChannel === 'undefined') return;
 
             new QWebChannel(qt.webChannelTransport, function(channel) {
                 var bridge = channel.objects.bridge;
-                if (!bridge) {
-                    console.error('[MapCanvas] Bridge tidak ditemukan di channel');
-                    return;
-                }
+                if (!bridge) return;
 
-                /* Cari objek Leaflet map — harus punya .on() dan .getCenter() */
                 var mapObj = null;
-                var keys = Object.keys(window);
-                for (var i = 0; i < keys.length; i++) {
-                    var key = keys[i];
-                    if (!key.startsWith('map_')) continue;
+                for (var key in window) {
                     try {
-                        var obj = window[key];
-                        if (obj &&
-                            typeof obj.on === 'function' &&
-                            typeof obj.getCenter === 'function') {
-                            mapObj = obj;
+                        if (key.startsWith('map_') &&
+                            window[key] !== null &&
+                            typeof window[key].on === 'function') {
+                            mapObj = window[key];
                             break;
                         }
                     } catch(e) {}
                 }
 
-                if (!mapObj) {
-                    console.error('[MapCanvas] Objek peta Leaflet tidak ditemukan');
-                    return;
+                if (mapObj) {
+                    mapObj.on('click', function(e) {
+                        bridge.onMapClick(e.latlng.lat, e.latlng.lng);
+                    });
+                    mapObj.getContainer().style.cursor = 'crosshair';
                 }
-
-                mapObj.on('click', function(e) {
-                    var lat = e.latlng.lat;
-                    var lng = e.latlng.lng;
-                    console.log('[MapCanvas] Klik terdeteksi:', lat, lng);
-                    bridge.onMapClick(lat, lng);
-                });
-
-                mapObj.getContainer().style.cursor = 'crosshair';
-                console.log('[MapCanvas] Click handler berhasil dipasang');
             });
         })();
         """
@@ -209,15 +165,27 @@ class MapCanvas(QWidget):
 
     def _build_base_map(self, center_lat=-5.39, center_lon=105.26,
                         zoom=13) -> folium.Map:
-        """
-        Buat folium Map dengan tile OpenStreetMap.
-        CATATAN: prefer_canvas=True DIHAPUS — menyebabkan PolyLine hilang saat zoom.
-        """
-        return folium.Map(
+        """Buat folium Map dengan tile OpenStreetMap + info overlay di dalam peta."""
+        m = folium.Map(
             location=[center_lat, center_lon],
             zoom_start=zoom,
             tiles="OpenStreetMap",
+            prefer_canvas=True
         )
+
+        # Info overlay di dalam peta — tidak memakan ruang layout Qt
+        info_html = (
+            '<div style="position:fixed;bottom:30px;left:50%;'
+            'transform:translateX(-50%);background:rgba(255,255,255,0.88);'
+            'padding:6px 18px;border-radius:20px;'
+            'box-shadow:0 2px 8px rgba(0,0,0,.18);'
+            'z-index:9999;font-family:Arial;font-size:12px;color:#2980B9;'
+            'pointer-events:none;">'
+            '🗺️&nbsp; Klik pada peta untuk menambah lokasi pengiriman'
+            '</div>'
+        )
+        m.get_root().html.add_child(folium.Element(info_html))
+        return m
 
     def _priority_icon(self, priority: float) -> folium.Icon:
         """Return folium Icon berdasarkan skor prioritas."""
@@ -231,7 +199,7 @@ class MapCanvas(QWidget):
     # ── Public API ────────────────────────────────────────────────────────────
 
     def _draw_empty_state(self):
-        """Tampilkan peta kosong dengan instruksi."""
+        """Tampilkan peta kosong dengan marker contoh depot."""
         m = self._build_base_map()
         folium.Marker(
             location=[-5.3971, 105.2668],
@@ -297,43 +265,27 @@ class MapCanvas(QWidget):
     def plot_solution(self, solution: dict, nodes: list, depot, problem):
         """
         Tampilkan rute optimal di atas peta real dengan polyline berwarna.
-
-        FIX: ACO mengembalikan index matriks (0=depot, 1..n=delivery node).
-        Mapping dilakukan via index ke all_nodes list — bukan via node_id dict
-        — sehingga semua node selalu ditemukan dan rute tidak terputus.
         """
         m = self.plot_nodes(nodes, depot, _skip_render=True)
 
-        # ── FIX: index-based mapping ──────────────────────────────────────────
-        # problem.get_all_nodes() → [depot, node1, node2, ...]
-        # Index 0 = depot, index 1..n = delivery nodes
-        # HARUS sama urutannya dengan yang dipakai ACO saat build dist_matrix
-        all_nodes     = problem.get_all_nodes()
-        routes        = solution.get("routes", [])
-        total_dist_km = solution.get("distance", 0) / 1000.0
+        node_map              = {n.node_id: n for n in nodes}
+        node_map[depot.node_id] = depot
+        routes                = solution.get("routes", [])
+        total_dist_km         = solution.get("distance", 0) / 1000.0
 
         for vehicle_idx, route in enumerate(routes):
             if not route:
                 continue
 
-            color = VEHICLE_COLORS[vehicle_idx % len(VEHICLE_COLORS)]
+            color      = VEHICLE_COLORS[vehicle_idx % len(VEHICLE_COLORS)]
+            full_route = [depot.node_id] + list(route) + [depot.node_id]
 
-            # route = list index matriks, misal [2, 1, 3]
-            # full_route_idx: depot(0) → 2 → 1 → 3 → depot(0)
-            full_route_idx = [0] + list(route) + [0]
-
-            # Ambil koordinat via index → all_nodes
-            coords = []
-            for idx in full_route_idx:
-                if 0 <= idx < len(all_nodes):
-                    node = all_nodes[idx]
-                    coords.append([node.lat, node.lon])
-                else:
-                    print(f"[WARN] plot_solution: index {idx} di luar "
-                          f"jangkauan all_nodes (len={len(all_nodes)})")
+            coords = [
+                [node_map[nid].lat, node_map[nid].lon]
+                for nid in full_route if nid in node_map
+            ]
 
             if len(coords) >= 2:
-                # Garis rute — tetap ada saat zoom karena prefer_canvas dihapus
                 folium.PolyLine(
                     locations=coords,
                     color=color,
@@ -342,11 +294,11 @@ class MapCanvas(QWidget):
                     tooltip=f"Kendaraan {vehicle_idx + 1}",
                 ).add_to(m)
 
-                # Panah arah di setiap midpoint segmen
+                # Panah arah di midpoint setiap segmen
                 for i in range(len(coords) - 1):
                     mid = [
-                        (coords[i][0] + coords[i + 1][0]) / 2,
-                        (coords[i][1] + coords[i + 1][1]) / 2,
+                        (coords[i][0] + coords[i+1][0]) / 2,
+                        (coords[i][1] + coords[i+1][1]) / 2,
                     ]
                     folium.RegularPolygonMarker(
                         location=mid,
@@ -359,13 +311,13 @@ class MapCanvas(QWidget):
                         rotation=45
                     ).add_to(m)
 
-        # Banner judul di atas peta
+        # Banner total jarak di atas peta
         banner = (
             f'<div style="position:fixed;top:12px;left:50%;'
             f'transform:translateX(-50%);background:white;padding:8px 18px;'
             f'border-radius:20px;box-shadow:0 2px 10px rgba(0,0,0,.25);'
             f'z-index:9999;font-family:Arial;font-size:13px;font-weight:bold;'
-            f'color:#1A1A2E;">'
+            f'color:#1A1A2E;pointer-events:none;">'
             f'🚚 Rute Optimal &nbsp;|&nbsp; Total Jarak: {total_dist_km:.2f} km'
             f'</div>'
         )
@@ -374,8 +326,15 @@ class MapCanvas(QWidget):
         self.current_solution = solution
         self._render(m)
 
+    def animate_iteration(self, pheromone_matrix, nodes: list, depot):
+        """
+        (Fitur opsional) Visualisasi intensitas feromon per iterasi.
+        Hanya diimplementasikan jika waktu pengerjaan mencukupi.
+        """
+        pass
+
     def clear(self):
-        """Reset ke empty state."""
+        """Reset canvas ke empty state."""
         self.current_nodes    = []
         self.current_solution = None
         self._draw_empty_state()
