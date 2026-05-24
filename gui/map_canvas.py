@@ -294,21 +294,36 @@ class MapCanvas(QWidget):
                     tooltip=f"Kendaraan {vehicle_idx + 1}",
                 ).add_to(m)
 
-                # Panah arah di midpoint setiap segmen
+                # Panah arah di midpoint setiap segmen menggunakan DivIcon
+                # (RegularPolygonMarker deprecated — tidak kompatibel Leaflet >= 1.8)
+                import math as _math
                 for i in range(len(coords) - 1):
                     mid = [
                         (coords[i][0] + coords[i+1][0]) / 2,
                         (coords[i][1] + coords[i+1][1]) / 2,
                     ]
-                    folium.RegularPolygonMarker(
+                    # Hitung sudut rotasi panah berdasarkan arah segmen
+                    dy = coords[i+1][0] - coords[i][0]
+                    dx = coords[i+1][1] - coords[i][1]
+                    angle = _math.degrees(_math.atan2(dx, dy))
+
+                    arrow_html = (
+                        f'<div style="'
+                        f'width:0;height:0;'
+                        f'border-left:6px solid transparent;'
+                        f'border-right:6px solid transparent;'
+                        f'border-bottom:12px solid {color};'
+                        f'transform:rotate({angle:.1f}deg);'
+                        f'opacity:0.85;'
+                        f'"></div>'
+                    )
+                    folium.Marker(
                         location=mid,
-                        number_of_sides=3,
-                        radius=7,
-                        color=color,
-                        fill=True,
-                        fill_color=color,
-                        fill_opacity=0.9,
-                        rotation=45
+                        icon=folium.DivIcon(
+                            html=arrow_html,
+                            icon_size=(12, 12),
+                            icon_anchor=(6, 6),
+                        )
                     ).add_to(m)
 
         # Banner total jarak di atas peta

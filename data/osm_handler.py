@@ -11,14 +11,14 @@ Bertanggung jawab untuk:
 Catatan Penting:
   - Graf diunduh SEKALI lalu disimpan sebagai file .graphml
   - Jarak yang digunakan adalah jarak JALAN, bukan garis lurus
-  - Jika path tidak ditemukan antar dua node, gunakan fallback Euclidean
+  - Jika path tidak ditemukan antar dua node, gunakan fallback Haversine
 
 PIC: Anggota 4 (Data & Visualisasi)
 Kolaborasi: Anggota 1 (output matriks jarak ke ACO)
 
 CHANGELOG:
   - FIX: Download graf dengan largest_component=True agar graf terkoneksi penuh
-  - FIX: Tambah logging jumlah fallback Euclidean agar mudah dideteksi
+  - FIX: Tambah logging jumlah fallback Haversine agar mudah dideteksi
   - FIX: Gunakan ox.distance.nearest_nodes (API baru osmnx >= 1.0)
 """
 
@@ -81,7 +81,7 @@ class OSMHandler:
 
         FIX: Tambah retain_all=False (default) agar hanya komponen
         terbesar yang disimpan → dijamin strongly connected → tidak ada
-        path yang putus → tidak ada fallback Euclidean.
+        path yang putus → tidak ada fallback Haversine.
         """
         import osmnx as ox
         try:
@@ -199,7 +199,7 @@ class OSMHandler:
 
         if fallback_count > 0:
             print(f"[WARN] {fallback_count} pasang node menggunakan fallback "
-                  f"Euclidean (jarak lurus). Coba force_download=True untuk "
+                  f"Haversine (jarak lurus). Coba force_download=True untuk "
                   f"memperbarui cache graf.")
         else:
             print("Semua jarak dihitung via jalan nyata (tidak ada fallback).")
@@ -227,10 +227,10 @@ class OSMHandler:
             return dist, False
         except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
             print(f"[WARN] Tidak ada path antara node {node_a} ↔ {node_b}: {e}. "
-                  f"Menggunakan fallback Euclidean.")
-            return self._euclidean_fallback(node_a, node_b), True
+                  f"Menggunakan fallback Haversine.")
+            return self._haversine_fallback(node_a, node_b), True
 
-    def _euclidean_fallback(self, node_a: int, node_b: int) -> float:
+    def _haversine_fallback(self, node_a: int, node_b: int) -> float:
         """
         Hitung jarak garis lurus (Haversine) sebagai fallback.
 
